@@ -1,0 +1,58 @@
+# ========================
+# Python & Logic
+# ========================
+# Ignore compiled bytecode (the "speed booster" files)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ========================
+# Virtual Environments
+# ========================
+# Ignore the tool folders for both you and Rohan
+venv/
+env/
+.venv/
+.env
+
+# ========================
+# Environment Variables (Secrets)
+# ========================
+# CRITICAL: Never upload passwords to GitHub
+.env
+.env.prod
+.env.dev
+
+# ========================
+# IDE & Editor Settings
+# ========================
+# Ignore VS Code specific settings (colors, workspace prefs)
+.vscode/
+.idea/
+
+# ========================
+# Operating System Junk
+# ========================
+# Windows thumbnail caches
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Mac specific (just in case)
+.DS_Store
+
+# ========================
+# Database & Storage
+# ========================
+# Ignore local SQLite databases (Rohan's side)
+*.sqlite3
+*.db
+
+# Ignore local folders if you map Docker volumes here
+postgres_data/
+minio_data/
+
+# ========================
+# Logs
+# ========================
+*.log
