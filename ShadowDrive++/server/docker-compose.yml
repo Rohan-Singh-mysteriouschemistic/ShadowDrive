@@ -7,7 +7,7 @@ services:
     container_name: shadow_db
     environment:
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: SDrive516477#
       POSTGRES_DB: shadowdrive
     ports:
       - "5432:5432"
