@@ -1,22 +1,23 @@
-import sqlite3
+"""
+db_setup.py — One-time database initializer.
+
+Run this once before anything else:
+    python database/db_setup.py
+
+After that, diff_engine.py calls ensure_db() automatically
+at startup, so you don't need to run this again unless you
+want to reset the DB manually.
+"""
+
+import sys
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "shadow.db")
+# Make sure Client-Logic is on the path so we can import diff_engine
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Client-Logic"))
 
-conn = sqlite3.connect(DB_PATH)
-cur = conn.cursor()
+from diff_engine import ensure_db, DB_PATH
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS files (
-    file_path TEXT PRIMARY KEY,
-    hash TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    last_modified REAL NOT NULL
-)
-""")
-
-conn.commit()
-conn.close()
-
-print("DB initialized at:", DB_PATH)
+if __name__ == "__main__":
+    ensure_db()
+    print(f"Database initialized at: {DB_PATH}")
+    print("Tables created: files, events")

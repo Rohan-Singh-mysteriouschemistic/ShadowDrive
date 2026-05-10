@@ -1,56 +1,72 @@
 import time
-import sqlite3
-from datetime import datetime
+import threading
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# DB Setup
+from diff_engine import process_single_file, run_full_scan
+# NEW: Import the background sync loop
+from sync_engine import start_sync_loop 
 
-DB_PATH = "file_events.db"
+DEBOUNCE_DELAY = 2.0
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("""CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,file_path TEXT NOT NULL,timestamp TEXT NOT NULL)""")
-    conn.commit()
-    conn.close()
-
-def log_event(event_type, file_path):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("INSERT INTO events (event_type, file_path, timestamp) VALUES (?, ?, ?)",(event_type, str(file_path), timestamp))
-    conn.commit()
-    conn.close()
-    print(f"[{event_type.upper()}] {file_path} at {timestamp}")
-
-
-# Event Handler
 class WatcherHandler(FileSystemEventHandler):
+    def __init__(self):
+        super().__init__()
+        self._timers = {}
+        self._lock = threading.Lock()
+
+    def _schedule(self, event_type, path):
+        with self._lock:
+            existing = self._timers.get(path)
+            if existing:
+                existing.cancel()
+            timer = threading.Timer(DEBOUNCE_DELAY, self._fire, args=(event_type, path))
+            self._timers[path] = timer
+            timer.start()
+
+    def _fire(self, event_type, path):
+        with self._lock:
+            self._timers.pop(path, None)
+        process_single_file(path, event_type)
+
     def on_created(self, event):
-        if not event.is_directory:
-            log_event("created", event.src_path)
+        if not event.is_directory: self._schedule("created", event.src_path)
 
     def on_modified(self, event):
-        if not event.is_directory:
-            log_event("modified", event.src_path)
+        if not event.is_directory: self._schedule("modified", event.src_path)
 
     def on_deleted(self, event):
         if not event.is_directory:
-            log_event("deleted", event.src_path)
+            with self._lock:
+                timer = self._timers.pop(event.src_path, None)
+                if timer: timer.cancel()
+            process_single_file(event.src_path, "deleted")
 
     def on_moved(self, event):
         if not event.is_directory:
-            log_event("moved", f"{event.src_path} -> {event.dest_path}")
+            with self._lock:
+                timer = self._timers.pop(event.src_path, None)
+                if timer: timer.cancel()
+            process_single_file(event.src_path, "deleted")
+            self._schedule("created", event.dest_path)
 
 def main():
-    init_db()
-
-    watch_dir = Path("watch_folder")
+    watch_dir = Path(__file__).parent.parent / "watch_folder"
     watch_dir.mkdir(exist_ok=True)
 
-    print(f"Watching directory: {watch_dir.resolve()}")
+    print("=" * 50)
+    print("  ShadowDrive++ Client Agent (Week 3)")
+    print("=" * 50)
+
+    print("[STARTUP] Running full scan...")
+    run_full_scan()
+    
+    # NEW: Start the Sync Engine in a separate background thread
+    # This allows the client to watch files AND talk to the server at once.
+    print("[STARTUP] Starting Network Sync Engine...")
+    sync_thread = threading.Thread(target=start_sync_loop, daemon=True)
+    sync_thread.start()
 
     event_handler = WatcherHandler()
     observer = Observer()
@@ -61,10 +77,9 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
+        print("\n[SHUTDOWN] Stopping...")
         observer.stop()
-
     observer.join()
-
 
 if __name__ == "__main__":
     main()
