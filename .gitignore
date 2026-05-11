@@ -25,3 +25,19 @@ docs/
 
 # Ignore temporary AI implementation logs
 BMAD/implementation-artifacts/
+
+# 1. Local Database (Root level)
+shadow.db
+shadow.db-journal
+
+# 2. Your Test Data
+watch_folder/
+
+# 3. Python Compiled Files
+**/__pycache__/
+*.pyc
+
+# 4. Environment / IDE
+.vscode/
+venv/
+.env
