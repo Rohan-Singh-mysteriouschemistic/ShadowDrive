@@ -184,10 +184,10 @@ def process_single_file(path, event_type):
 
             if row is None:
                 print(f"[NEW]      {os.path.basename(path)}")
-                _log_event(cur, "new", path, current[path]["hash"])
+                _log_event(cur, "new", path, file_hash)
             elif row[0] != file_hash:
                 print(f"[MODIFIED] {os.path.basename(path)}")
-                _log_event(cur, "modified", path, current[path]["hash"])
+                _log_event(cur, "modified", path, file_hash)
             else:
                 # Hash unchanged (e.g. metadata-only touch) — nothing to do
                 conn.close()

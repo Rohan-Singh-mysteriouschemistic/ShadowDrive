@@ -81,35 +81,22 @@ def sync_pending_events():
             if response is None:
                 continue
 
-            # SERVER NEEDS FILE
+            # Server always returns 201 with JSON body
             if response.status_code == 201:
+                data = response.json()
 
-                if event_type == "deleted":
-                    print(f"[SYNC] Deleted file acknowledged")
+                if data.get("upload_required") and event_type != "deleted":
+                    success = client.upload_file(
+                        full_path,
+                        relative_path
+                    )
+
+                    if success:
+                        print(f"[UPLOAD SUCCESS] {relative_path}")
+                        mark_synced(cursor, conn, event_id)
+                else:
+                    print(f"[SYNC] Server acknowledged (no upload needed)")
                     mark_synced(cursor, conn, event_id)
-                    continue
-
-                success = client.upload_file(
-                    full_path,
-                    relative_path
-                )
-
-                if success:
-                    print(f"[UPLOAD SUCCESS] {relative_path}")
-                    mark_synced(cursor, conn, event_id)
-
-            # SERVER ALREADY HAS FILE
-            elif response.status_code == 200:
-
-                print(f"[SYNC] Already synced")
-
-                mark_synced(cursor, conn, event_id)
-
-            else:
-                print(
-                    f"[SERVER ERROR] "
-                    f"Status={response.status_code}"
-                )
 
         except Exception as e:
             print(f"[EVENT ERROR] {e}")
