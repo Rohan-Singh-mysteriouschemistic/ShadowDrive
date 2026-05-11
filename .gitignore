@@ -19,3 +19,9 @@ minio_data/
 # OS Junk
 .DS_Store
 Thumbs.db
+
+# Ignore personal study documentation
+docs/
+
+# Ignore temporary AI implementation logs
+BMAD/implementation-artifacts/

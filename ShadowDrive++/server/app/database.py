@@ -9,3 +9,12 @@ engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+
+def get_db():
+    """Yield a database session for dependency injection, then auto-close."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
