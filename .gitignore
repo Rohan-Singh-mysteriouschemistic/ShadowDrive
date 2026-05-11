@@ -1,3 +1,31 @@
+# Python junk
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment (Heavy!)
+venv/
+env/
+
+# Environment Variables (Secrets!)
+.env
+.env.local
+
+# Database files (Don't upload your local DB)
+*.sqlite3
+postgres_data/
+minio_data/
+
+# OS Junk
+.DS_Store
+Thumbs.db
+
+# Ignore personal study documentation
+docs/
+
+# Ignore temporary AI implementation logs
+BMAD/implementation-artifacts/
+
 # 1. Local Database (Root level)
 shadow.db
 shadow.db-journal

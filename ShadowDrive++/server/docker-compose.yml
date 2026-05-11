@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # The Database (PostgreSQL)
+  db:
+    image: postgres:15
+    container_name: shadow_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: SDrive516477#
+      POSTGRES_DB: shadowdrive
+    ports:
+      - "5432:5432"
+
+  # The Storage (MinIO)
+  minio:
+    image: minio/minio
+    container_name: shadow_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000" # Code talks to this port
+      - "9001:9001" # You login to this port on Chrome
