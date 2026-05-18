@@ -5,7 +5,7 @@ echo ==================================================
 
 echo.
 echo [1/3] Starting Docker containers (PostgreSQL ^& MinIO)...
-cd "ShadowDrive++\server"
+cd "Server-Logic\server"
 docker-compose up -d
 
 echo.

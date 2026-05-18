@@ -45,3 +45,27 @@ class FileDeviceMap(Base):
     file_id = Column(BigInteger, ForeignKey("files.id"), primary_key=True)
     version_id = Column(BigInteger, ForeignKey("versions.id"), nullable=False)
     synced_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChunkUpload(Base):
+    """Tracks individual chunk uploads for a chunked file transfer (Week 5).
+
+    When a client uploads a large file, it splits the file into fixed-size
+    chunks (default 4 MB) and sends each chunk to /sync/upload_chunk.
+    This table records which chunks have been received for a given version_id.
+
+    Once total_chunks == the number of rows for that version_id, the server
+    triggers assembly: all chunks are concatenated in order and stored as a
+    single object in MinIO.
+    """
+    __tablename__ = "chunk_uploads"
+    id = Column(BigInteger, primary_key=True, index=True)
+    version_id = Column(BigInteger, ForeignKey("versions.id"), nullable=False)
+    chunk_index = Column(Integer, nullable=False)       # 0-based index
+    total_chunks = Column(Integer, nullable=False)       # total expected chunks
+    chunk_storage_key = Column(String(500), nullable=False)  # MinIO key for this chunk
+    size_bytes = Column(BigInteger, nullable=False)
+    received_at = Column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint('version_id', 'chunk_index', name='unique_chunk_per_version'),
+    )

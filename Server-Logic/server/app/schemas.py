@@ -63,3 +63,16 @@ class FileVersionOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ─── Chunk Upload Schemas (Week 5) ───────────────────────────────────────────
+
+class ChunkUploadResponse(BaseModel):
+    """Response from /sync/upload_chunk."""
+    status: str          # "chunk_received" | "assembled" | "error"
+    version_id: int
+    chunk_index: int
+    chunks_received: int  # how many chunks the server now has for this version
+    total_chunks: int
+    assembled: bool       # True when all chunks arrived and file is assembled
+

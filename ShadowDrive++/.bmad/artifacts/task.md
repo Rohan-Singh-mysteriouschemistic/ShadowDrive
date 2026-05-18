@@ -1,4 +1,0 @@
-- `[x]` Update `schemas.py` with `DeviceCreate` and `DeviceOut`
-- `[x]` Create `routers/device.py` and implement `POST /devices/register`
-- `[x]` Update `main.py` to include the `device` router
-- `[x]` Verify changes
