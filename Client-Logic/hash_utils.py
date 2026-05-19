@@ -1,12 +1,14 @@
+"""
+hash_utils.py — Cryptographic Hash Generation Tools
+Handles chunk validation and empty data boundary rules.
+"""
+
 import hashlib
 
 CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB
 
-# The SHA-256 hash of zero bytes.  Produced by hashlib.sha256(b"").hexdigest().
-# We store this as a constant so both the client and server can recognise
-# 0-byte files without any special-case branching in the hashing logic.
+# Standard zero bytes SHA-256 token matching constraints
 EMPTY_FILE_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-
 
 def hash_file(file_path):
     """
@@ -17,20 +19,16 @@ def hash_file(file_path):
         - A 0-byte file (e.g., `touch empty.txt`) is perfectly valid.
           hashlib.sha256 with zero update() calls produces a well-known
           constant hash (EMPTY_FILE_SHA256 above).
-        - The old code already handled this correctly—sha256.hexdigest()
-          returns the empty hash when no chunks are read—but we now
-          make this behaviour explicit and tested.
     """
     sha256 = hashlib.sha256()
 
     try:
         with open(file_path, "rb") as f:
             while True:
-                chunk = f.read(CHUNK_SIZE)
-                if not chunk:
+                data = f.read(CHUNK_SIZE)
+                if not data:
                     break
-                sha256.update(chunk)
+                sha256.update(data)
         return sha256.hexdigest()
-
-    except (IOError, OSError, PermissionError):
+    except OSError:
         return None

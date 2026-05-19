@@ -1,19 +1,22 @@
+"""
+diff_engine.py — High-Performance Metadata Shadow Database Engine
+Tracks incremental differentials and logs state changes into local shadow DB entries.
+"""
+
 import os
 import sqlite3
 from datetime import datetime
 from hash_utils import hash_file
+import config
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH   = os.path.join(BASE_DIR, "shadow.db")
-WATCH_FOLDER = os.path.join(BASE_DIR, "watch_folder")
-
-
-# ─── DB INIT ──────────────────────────────────────────────────────────────────
+# Fallback checking logic ensures matching targets across scripts
+config.DB_PATH = getattr(config, 'DB_PATH', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shadow.db"))
+config.WATCH_DIR = getattr(config, 'WATCH_DIR', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "watch_folder"))
 
 def ensure_db():
-    conn = sqlite3.connect(DB_PATH)
+    """Initializes local state layout schemas inside shadow.db context."""
+    conn = sqlite3.connect(config.DB_PATH)
     cur  = conn.cursor()
-    # files table remains the same
     cur.execute("""
         CREATE TABLE IF NOT EXISTS files (
             file_path     TEXT PRIMARY KEY,
@@ -22,7 +25,6 @@ def ensure_db():
             last_modified REAL NOT NULL
         )
     """)
-    # UPDATED: Added 'hash' and 'is_synced' columns
     cur.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,149 +38,46 @@ def ensure_db():
     conn.commit()
     conn.close()
 
-
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
-
 def _log_event(cur, event_type, file_path, file_hash=None):
-    """Write a change event with its hash and sync status."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute(
-        "INSERT INTO events (event_type, file_path, hash, is_synced, timestamp) VALUES (?, ?, ?, 0, ?)",
-        (event_type, file_path, file_hash, timestamp)
-    )
-
-
-def _upsert_file(cur, path, data):
-    """
-    Insert a new file record, or update it if file_path already exists.
-    Never touches other rows — no DELETE FROM needed.
-    """
+    """Stages outbound transactional changes into temporary action tables."""
+    timestamp = datetime.now().isoformat()
     cur.execute("""
-        INSERT INTO files (file_path, hash, size, last_modified)
+        INSERT INTO events (event_type, file_path, hash, timestamp)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(file_path) DO UPDATE SET
-            hash          = excluded.hash,
-            size          = excluded.size,
-            last_modified = excluded.last_modified
-    """, (path, data["hash"], data["size"], data["mtime"]))
-
+    """, (event_type, file_path, file_hash, timestamp))
 
 def _delete_file(cur, path):
-    """Remove a single file record from the shadow DB."""
+    """Clears tracking maps out of local shadow DB indices."""
     cur.execute("DELETE FROM files WHERE file_path = ?", (path,))
 
-
-def _load_db_state(cur):
-    """Return entire shadow DB as a dict keyed by file_path."""
-    cur.execute("SELECT file_path, hash, size, last_modified FROM files")
-    return {
-        path: {"hash": h, "size": size, "mtime": mtime}
-        for path, h, size, mtime in cur.fetchall()
-    }
-
-
-def _scan_watch_folder():
-    """Walk watch_folder and return current filesystem state as a dict."""
-    snapshot = {}
-
-    for root, _, files in os.walk(WATCH_FOLDER):
-        for name in files:
-            path = os.path.join(root, name)
-            try:
-                stat      = os.stat(path)
-                file_hash = hash_file(path)
-                if file_hash:                       # None means unreadable — skip
-                    snapshot[path] = {
-                        "hash" : file_hash,
-                        "size" : stat.st_size,
-                        "mtime": stat.st_mtime,
-                    }
-            except (IOError, OSError):
-                continue                            # File disappeared mid-scan
-
-    return snapshot
-
-
-# ─── PUBLIC API ───────────────────────────────────────────────────────────────
-
-def run_full_scan():
-    """
-    Compare entire watch_folder against shadow DB.
-    Used on startup to catch changes that happened while the watcher was off.
-    Returns {"new": [...], "modified": [...], "deleted": [...]}.
-    """
-    ensure_db()
-
-    conn    = sqlite3.connect(DB_PATH)
-    cur     = conn.cursor()
-    changes = {"new": [], "modified": [], "deleted": []}
-
-    current  = _scan_watch_folder()
-    previous = _load_db_state(cur)
-
-    current_paths  = set(current.keys())
-    previous_paths = set(previous.keys())
-
-    for path in current_paths - previous_paths:
-        print(f"[NEW]      {os.path.basename(path)}")
-        _log_event(cur, "new", path, current[path]["hash"])
-        _upsert_file(cur, path, current[path])
-        changes["new"].append(path)
-
-    for path in previous_paths - current_paths:
-        print(f"[DELETED]  {os.path.basename(path)}")
-        _log_event(cur, "deleted", path)
-        _delete_file(cur, path)
-        changes["deleted"].append(path)
-
-    for path in current_paths & previous_paths:
-        if current[path]["hash"] != previous[path]["hash"]:
-            print(f"[MODIFIED] {os.path.basename(path)}")
-            _log_event(cur, "modified", path, current[path]["hash"])
-            _upsert_file(cur, path, current[path])
-            changes["modified"].append(path)
-
-    conn.commit()
-    conn.close()
-
-    total = sum(len(v) for v in changes.values())
-    print(f"\nFull scan done — {total} change(s) detected.")
-    return changes
-
-
 def process_single_file(path, event_type):
-    """
-    Handle one file event fired by the watcher.
-    Updates only the affected row — no full scan.
+    """Processes discrete event mutations targeted by OS folder hooks."""
+    from sync_engine import is_local_mutation_active
+    
+    # CRITICAL: If Week 6 download worker generated this change, ignore it
+    if is_local_mutation_active():
+        return
 
-    event_type: "created" | "modified" | "deleted"
-    """
     ensure_db()
-
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH)
     cur  = conn.cursor()
 
     if event_type == "deleted":
         print(f"[DELETED]  {os.path.basename(path)}")
         _log_event(cur, "deleted", path)
         _delete_file(cur, path)
-
-    else:  # "created" or "modified" — both need hash + stat
+    else:
         try:
+            if not os.path.exists(path):
+                conn.close()
+                return
             stat      = os.stat(path)
             file_hash = hash_file(path)
 
-            if not file_hash:           # Unreadable (locked, etc.) — skip
+            if not file_hash: 
                 conn.close()
                 return
 
-            data = {
-                "hash" : file_hash,
-                "size" : stat.st_size,
-                "mtime": stat.st_mtime,
-            }
-
-            # Check if it already exists in DB to label correctly
             cur.execute("SELECT hash FROM files WHERE file_path = ?", (path,))
             row = cur.fetchone()
 
@@ -189,19 +88,69 @@ def process_single_file(path, event_type):
                 print(f"[MODIFIED] {os.path.basename(path)}")
                 _log_event(cur, "modified", path, file_hash)
             else:
-                # Hash unchanged (e.g. metadata-only touch) — nothing to do
                 conn.close()
                 return
 
-            _upsert_file(cur, path, data)
-
-        except (IOError, OSError):
+            cur.execute("""
+                INSERT OR REPLACE INTO files (file_path, hash, size, last_modified)
+                VALUES (?, ?, ?, ?)
+            """, (path, file_hash, stat.st_size, stat.st_mtime))
+            
+        except OSError:
             conn.close()
             return
 
     conn.commit()
     conn.close()
 
+def run_full_scan():
+    """Bootstrap scanner that catches changes made while agent daemon was completely dark."""
+    ensure_db()
+    
+    from sync_engine import is_local_mutation_active
+    if is_local_mutation_active():
+        return
 
-if __name__ == "__main__":
-    run_full_scan()
+    if not os.path.exists(config.WATCH_DIR):
+        os.makedirs(config.WATCH_DIR)
+
+    conn = sqlite3.connect(config.DB_PATH)
+    cur  = conn.cursor()
+
+    cur.execute("SELECT file_path, hash FROM files")
+    db_records = {row[0]: row[1] for row in cur.fetchall()}
+
+    current_paths = set()
+
+    for root, _, files in os.walk(config.WATCH_DIR):
+        for file in files:
+            full_path = os.path.join(root, file)
+            current_paths.add(full_path)
+            
+            try:
+                stat = os.stat(full_path)
+                h = hash_file(full_path)
+                if not h:
+                    continue
+
+                if full_path not in db_records:
+                    print(f"[BOOTSTRAP FIND] New entry -> {file}")
+                    _log_event(cur, "new", full_path, h)
+                    cur.execute("INSERT OR REPLACE INTO files VALUES (?, ?, ?, ?)", 
+                                (full_path, h, stat.st_size, stat.st_mtime))
+                elif db_records[full_path] != h:
+                    print(f"[BOOTSTRAP FIND] Modified entry -> {file}")
+                    _log_event(cur, "modified", full_path, h)
+                    cur.execute("INSERT OR REPLACE INTO files VALUES (?, ?, ?, ?)", 
+                                (full_path, h, stat.st_size, stat.st_mtime))
+            except OSError:
+                continue
+
+    for tracked_path in db_records:
+        if tracked_path not in current_paths:
+            print(f"[BOOTSTRAP FIND] Vanished entry -> {os.path.basename(tracked_path)}")
+            _log_event(cur, "deleted", tracked_path)
+            cur.execute("DELETE FROM files WHERE file_path = ?", (tracked_path,))
+
+    conn.commit()
+    conn.close()
