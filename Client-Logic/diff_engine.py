@@ -25,6 +25,11 @@ def ensure_db():
             last_modified REAL NOT NULL
         )
     """)
+    try:
+        cur.execute("ALTER TABLE files ADD COLUMN version_id INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,16 +40,21 @@ def ensure_db():
             timestamp  TEXT NOT NULL
         )
     """)
+    try:
+        cur.execute("ALTER TABLE events ADD COLUMN version_id INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
-def _log_event(cur, event_type, file_path, file_hash=None):
+def _log_event(cur, event_type, file_path, file_hash=None, version_id=0):
     """Stages outbound transactional changes into temporary action tables."""
     timestamp = datetime.now().isoformat()
     cur.execute("""
-        INSERT INTO events (event_type, file_path, hash, timestamp)
-        VALUES (?, ?, ?, ?)
-    """, (event_type, file_path, file_hash, timestamp))
+        INSERT INTO events (event_type, file_path, hash, timestamp, version_id)
+        VALUES (?, ?, ?, ?, ?)
+    """, (event_type, file_path, file_hash, timestamp, version_id))
 
 def _delete_file(cur, path):
     """Clears tracking maps out of local shadow DB indices."""
@@ -78,23 +88,26 @@ def process_single_file(path, event_type):
                 conn.close()
                 return
 
-            cur.execute("SELECT hash FROM files WHERE file_path = ?", (path,))
+            cur.execute("SELECT hash, version_id FROM files WHERE file_path = ?", (path,))
             row = cur.fetchone()
+            
+            db_hash = row[0] if row else None
+            version_id = row[1] if row else 0
 
             if row is None:
                 print(f"[NEW]      {os.path.basename(path)}")
-                _log_event(cur, "new", path, file_hash)
-            elif row[0] != file_hash:
+                _log_event(cur, "new", path, file_hash, version_id)
+            elif db_hash != file_hash:
                 print(f"[MODIFIED] {os.path.basename(path)}")
-                _log_event(cur, "modified", path, file_hash)
+                _log_event(cur, "modified", path, file_hash, version_id)
             else:
                 conn.close()
                 return
 
             cur.execute("""
-                INSERT OR REPLACE INTO files (file_path, hash, size, last_modified)
-                VALUES (?, ?, ?, ?)
-            """, (path, file_hash, stat.st_size, stat.st_mtime))
+                INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (path, file_hash, stat.st_size, stat.st_mtime, version_id))
             
         except OSError:
             conn.close()
@@ -117,8 +130,8 @@ def run_full_scan():
     conn = sqlite3.connect(config.DB_PATH)
     cur  = conn.cursor()
 
-    cur.execute("SELECT file_path, hash FROM files")
-    db_records = {row[0]: row[1] for row in cur.fetchall()}
+    cur.execute("SELECT file_path, hash, version_id FROM files")
+    db_records = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
 
     current_paths = set()
 
@@ -135,21 +148,21 @@ def run_full_scan():
 
                 if full_path not in db_records:
                     print(f"[BOOTSTRAP FIND] New entry -> {file}")
-                    _log_event(cur, "new", full_path, h)
-                    cur.execute("INSERT OR REPLACE INTO files VALUES (?, ?, ?, ?)", 
-                                (full_path, h, stat.st_size, stat.st_mtime))
-                elif db_records[full_path] != h:
+                    _log_event(cur, "new", full_path, h, 0)
+                    cur.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)", 
+                                (full_path, h, stat.st_size, stat.st_mtime, 0))
+                elif db_records[full_path][0] != h:
                     print(f"[BOOTSTRAP FIND] Modified entry -> {file}")
-                    _log_event(cur, "modified", full_path, h)
-                    cur.execute("INSERT OR REPLACE INTO files VALUES (?, ?, ?, ?)", 
-                                (full_path, h, stat.st_size, stat.st_mtime))
+                    _log_event(cur, "modified", full_path, h, db_records[full_path][1])
+                    cur.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)", 
+                                (full_path, h, stat.st_size, stat.st_mtime, db_records[full_path][1]))
             except OSError:
                 continue
 
     for tracked_path in db_records:
         if tracked_path not in current_paths:
             print(f"[BOOTSTRAP FIND] Vanished entry -> {os.path.basename(tracked_path)}")
-            _log_event(cur, "deleted", tracked_path)
+            _log_event(cur, "deleted", tracked_path, None, db_records[tracked_path][1])
             cur.execute("DELETE FROM files WHERE file_path = ?", (tracked_path,))
 
     conn.commit()

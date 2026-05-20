@@ -22,14 +22,18 @@ def health_check() -> bool:
         logger.warning("Health check failed: %s", e)
         return False
 
-def announce_metadata(relative_path: str, file_hash: str, event_type: str) -> tuple[bool, dict]:
+def announce_metadata(relative_path: str, file_hash: str, event_type: str, base_version_id: int = None, client_modified_at: str = None) -> tuple[bool, dict]:
     """Announce local file mutations to the server metadata repository."""
     try:
         payload = {
-            "file_path": relative_path,
-            "file_hash": file_hash,
-            "event_type": event_type
+            "path": relative_path,
+            "hash": file_hash,
+            "event": event_type
         }
+        if base_version_id is not None:
+            payload["base_version_id"] = base_version_id
+        if client_modified_at is not None:
+            payload["client_modified_at"] = client_modified_at
         resp = _session.post(
             f"{config.SERVER_BASE_URL}/sync/announce",
             json=payload,
@@ -90,39 +94,39 @@ def upload_chunk(local_path: str, offset: int, chunk_size: int, chunk_index: int
 
 # ─── WEEK 6 DOWNLOAD PIPELINE IMPLEMENTATION ─────────────────────────────────
 
-def get_server_metadata() -> tuple[bool, list]:
-    """GET /sync/metadata — Fetch downstream remote server file manifest."""
+def get_metadata_diff(device_id: int) -> tuple[bool, dict]:
+    """GET /sync/metadata/diff?device_id=<id> — Fetch diff payload for two-way sync."""
     try:
-        resp = _session.get(f"{config.SERVER_BASE_URL}/sync/metadata", timeout=30)
+        params = {"device_id": str(device_id)}
+        resp = _session.get(f"{config.SERVER_BASE_URL}/sync/metadata/diff", params=params, timeout=30)
         resp.raise_for_status()
-        # Returns a structured list of files present on the remote host
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("Failed to fetch server metadata manifest: %s", e)
-        return False, []
+        logger.error("Failed to fetch metadata diff: %s", e)
+        return False, {}
 
-def download_file(relative_path: str) -> tuple[bool, bytes]:
+def download_file(storage_path: str) -> tuple[bool, bytes]:
     """Downloads a complete single-shot file directly from the remote backend."""
     try:
-        params = {"file_path": relative_path}
+        params = {"storage_path": storage_path}
         resp = _session.get(f"{config.SERVER_BASE_URL}/sync/download", params=params, timeout=60)
         resp.raise_for_status()
         return True, resp.content
     except requests.RequestException as e:
-        logger.error("Failed downloading single-shot file %s: %s", relative_path, e)
+        logger.error("Failed downloading file %s: %s", storage_path, e)
         return False, b""
 
-def download_chunk(file_hash: str, chunk_index: int, version_id: int) -> tuple[bool, bytes]:
-    """Downloads a designated raw block segment via discrete hash identifiers."""
+def ack_sync(device_id: int, file_id: int, version_id: int) -> bool:
+    """Acknowledge successful sync of a file to update server mapping."""
     try:
-        params = {
-            "file_hash": file_hash,
-            "chunk_index": str(chunk_index),
+        data = {
+            "device_id": str(device_id),
+            "file_id": str(file_id),
             "version_id": str(version_id)
         }
-        resp = _session.get(f"{config.SERVER_BASE_URL}/sync/download_chunk", params=params, timeout=60)
+        resp = _session.post(f"{config.SERVER_BASE_URL}/sync/ack_sync", data=data, timeout=30)
         resp.raise_for_status()
-        return True, resp.content
+        return True
     except requests.RequestException as e:
-        logger.error("Failed downloading chunk %d for hash %s: %s", chunk_index, file_hash, e)
-        return False, b""
+        logger.error("Failed to ack sync for file %d version %d: %s", file_id, version_id, e)
+        return False

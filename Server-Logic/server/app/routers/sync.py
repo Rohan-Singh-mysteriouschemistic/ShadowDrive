@@ -697,10 +697,18 @@ def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
         # ── Step 4: Compute diff ─────────────────────────────────────────
         missing_files = []
         outdated_files = []
+        deleted_files = []
+        
+        for file_id in device_synced.keys():
+            if file_id not in server_state:
+                file_rec = db.query(models.File).filter(models.File.id == file_id).first()
+                if file_rec and file_rec.is_deleted:
+                    deleted_files.append(file_rec.file_path)
 
         for file_id, (file_record, latest_version) in server_state.items():
             diff_item = schemas.DiffItem(
                 file_path=file_record.file_path,
+                file_id=file_record.id,
                 hash=latest_version.hash,
                 version_num=latest_version.version_num,
                 version_id=latest_version.id,
@@ -719,7 +727,8 @@ def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
         return schemas.DiffResponse(
             device_id=device_id,
             missing_files=missing_files,
-            outdated_files=outdated_files
+            outdated_files=outdated_files,
+            deleted_files=deleted_files
         )
 
     except HTTPException:

@@ -25,5 +25,5 @@ start "ShadowDrive Client Watcher" cmd /k "python watcher.py"
 
 echo.
 echo All services have been launched in separate windows!
-cd "..\.."
+cd ".."
 echo ==================================================

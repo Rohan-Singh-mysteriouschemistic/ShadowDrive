@@ -6,7 +6,7 @@ echo "=================================================="
 
 echo ""
 echo "[1/3] Starting Docker containers (PostgreSQL & MinIO)..."
-cd "ShadowDrive++/server" || exit
+cd "Server-Logic/server" || exit
 docker-compose up -d
 
 echo ""
@@ -41,5 +41,5 @@ fi
 
 echo ""
 echo "All services have been launched!"
-cd "../../" || exit
+cd "../" || exit
 echo "=================================================="

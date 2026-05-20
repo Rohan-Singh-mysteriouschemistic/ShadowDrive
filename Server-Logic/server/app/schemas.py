@@ -110,6 +110,7 @@ class DiffItem(BaseModel):
     verify what it received.
     """
     file_path: str
+    file_id: int
     hash: str
     version_num: int
     version_id: int
@@ -130,4 +131,5 @@ class DiffResponse(BaseModel):
     device_id: int
     missing_files: list[DiffItem]
     outdated_files: list[DiffItem]
+    deleted_files: list[str] = []
 

@@ -116,51 +116,54 @@ def process_downstream_downloads():
     and updates the local workspace folder through sequential block collection.
     Now includes Week 7 Conflict Detection!
     """
-    success, server_files = network_client.get_server_metadata()
+    success, diff_payload = network_client.get_metadata_diff(device_id=1)
     if not success:
         return
 
     conn = sqlite3.connect(config.DB_PATH)
     cur = conn.cursor()
 
-    # Step 1: Detect deleted items on server to match locally
-    server_paths = {f["file_path"] for f in server_files}
-    cur.execute("SELECT file_path, hash FROM files")
-    local_files = cur.fetchall()
-
     _local_mutator.active = True  # Mute local event logging from handling this disk action
     try:
-        for path, db_hash in local_files:
-            # Reconstruct relative mapping for comparison checks
-            rel_path = os.path.relpath(path, config.WATCH_DIR).replace("\\", "/")
+        deleted_files = diff_payload.get("deleted_files", [])
+        for rel_path in deleted_files:
+            full_local_path = os.path.join(config.WATCH_DIR, rel_path.replace("/", os.sep))
             
-            if rel_path not in server_paths:
-                # WEEK 7: CONFLICT CHECK ON SERVER DELETION
-                current_local_hash = hash_utils.hash_file(path)
+            try:
+                cur.execute("SELECT hash, version_id FROM files WHERE file_path = ?", (full_local_path,))
+            except sqlite3.OperationalError:
+                # Fallback if DB not fully migrated
+                cur.execute("SELECT hash FROM files WHERE file_path = ?", (full_local_path,))
+            row = cur.fetchone()
+            
+            if row:
+                db_hash = row[0]
+                current_local_hash = hash_utils.hash_file(full_local_path)
                 
                 # If the file was changed locally AFTER the last sync, but deleted on the server -> CONFLICT!
                 if current_local_hash and current_local_hash != db_hash:
                     timestamp = int(time.time())
-                    root, ext = os.path.splitext(path)
+                    root, ext = os.path.splitext(full_local_path)
                     conflict_path = f"{root}_conflict_{timestamp}{ext}"
                     print(f"[CONFLICT] Server deleted '{rel_path}', but you modified it locally!")
                     print(f" -> Preserving your local modifications as: {os.path.basename(conflict_path)}")
-                    os.rename(path, conflict_path)
+                    os.rename(full_local_path, conflict_path)
                 else:
                     print(f"[DOWNLOAD PIPELINE] Server deleted file, removing locally: {rel_path}")
-                    if os.path.exists(path):
-                        os.remove(path)
+                    if os.path.exists(full_local_path):
+                        os.remove(full_local_path)
                 
-                cur.execute("DELETE FROM files WHERE file_path = ?", (path,))
+                cur.execute("DELETE FROM files WHERE file_path = ?", (full_local_path,))
                 conn.commit()
 
         # Step 2: Evaluate inserts and modifications 
-        for remote in server_files:
+        files_to_download = diff_payload.get("missing_files", []) + diff_payload.get("outdated_files", [])
+        for remote in files_to_download:
             rel_path = remote["file_path"]
-            remote_hash = remote["file_hash"]
-            remote_size = remote["size"]
-            version_id = remote.get("version_id", 1)
-            total_chunks = remote.get("total_chunks", 1)
+            remote_hash = remote["hash"]
+            version_id = remote["version_id"]
+            file_id = remote["file_id"]
+            storage_path = remote["storage_path"]
 
             full_local_path = os.path.join(config.WATCH_DIR, rel_path.replace("/", os.sep))
 
@@ -195,43 +198,21 @@ def process_downstream_downloads():
 
                 os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
 
-                download_success = False
-                # Scenario Alpha: Match single shot or multi-chunk reconstruct rule
-                if remote_size < config.CHUNK_THRESHOLD:
-                    dl_ok, file_bytes = network_client.download_file(rel_path)
-                    if dl_ok:
-                        with open(full_local_path, "wb") as f:
-                            f.write(file_bytes)
-                        download_success = True
-                else:
-                    # Multi-part chunk re-assembly
-                    tmp_file_path = full_local_path + ".tmp"
-                    try:
-                        with open(tmp_file_path, "wb") as f_out:
-                            for idx in range(total_chunks):
-                                chk_ok, chunk_bytes = network_client.download_chunk(remote_hash, idx, version_id)
-                                if not chk_ok:
-                                    raise IOError(f"Missing segment tracking block {idx}")
-                                f_out.write(chunk_bytes)
+                dl_ok, file_bytes = network_client.download_file(storage_path)
+                if dl_ok:
+                    with open(full_local_path, "wb") as f:
+                        f.write(file_bytes)
                         
-                        if os.path.exists(full_local_path):
-                            os.remove(full_local_path)
-                        os.rename(tmp_file_path, full_local_path)
-                        download_success = True
-                    except Exception as e:
-                        print(f"[DOWNLOAD ERROR] Reconstruction failed for {rel_path}: {e}")
-                        if os.path.exists(tmp_file_path):
-                            os.remove(tmp_file_path)
-
-                if download_success:
-                    # Record newly matched metadata tracking state
                     stat = os.stat(full_local_path)
                     cur.execute("""
-                        INSERT OR REPLACE INTO files (file_path, hash, size, last_modified)
-                        VALUES (?, ?, ?, ?)
-                    """, (full_local_path, remote_hash, stat.st_size, stat.st_mtime))
+                        INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (full_local_path, remote_hash, stat.st_size, stat.st_mtime, version_id))
                     conn.commit()
                     print(f"[DOWNLOAD SUCCESS] Materialized update onto filesystem: {rel_path}")
+                    
+                    # Update server tracking mapping
+                    network_client.ack_sync(1, file_id, version_id)
 
     finally:
         _local_mutator.active = False
@@ -266,11 +247,17 @@ def start_sync_loop():
                     full_path = event["file_path"]
                     file_hash = event["hash"]
 
+                    version_id = event["version_id"] if "version_id" in event.keys() else 0
+                    timestamp = event["timestamp"]
+
                     # Compute clean tracking paths relative to root target
                     relative_path = os.path.relpath(full_path, config.WATCH_DIR).replace("\\", "/")
                     print(f"[SYNC] Upload Pipeline announcing: {relative_path}")
                     
-                    success, response_data = network_client.announce_metadata(relative_path, file_hash, event_type)
+                    success, response_data = network_client.announce_metadata(
+                        relative_path, file_hash, event_type, 
+                        base_version_id=version_id, client_modified_at=timestamp
+                    )
                     if not success:
                         continue
 
@@ -280,6 +267,13 @@ def start_sync_loop():
                             continue
 
                         file_size = os.path.getsize(full_path)
+                        
+                        # In case of conflict, server returns conflict_info. We can ignore it here because
+                        # if upload_required is true, we must upload either the original file or the conflict copy.
+                        # Wait, if we are the winner, we upload the file as normal. If we are the loser, we don't upload
+                        # because the server actually expects the client to pull the conflict file. Wait, no,
+                        # the server explicitly responds with upload_required=True and says which version is ours!
+                        
                         job = UploadJob(
                             local_path=full_path,
                             remote_path=relative_path,
