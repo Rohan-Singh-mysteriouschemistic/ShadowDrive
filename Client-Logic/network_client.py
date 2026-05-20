@@ -1,60 +1,35 @@
 """
-network_client.py — HTTP transport layer for ShadowDrive++ client (Week 5)
-
-This module handles all HTTP communication between Rohan's sync engine
-and Shabd's FastAPI server.  The sync_engine.py and upload worker call
-these functions — they never use `requests` directly.
-
-Design decisions:
-    - requests.Session() is reused for connection pooling (TCP keep-alive).
-    - Every call returns a (success: bool, data: dict) tuple so the caller
-      can decide how to handle failures without try/except boilerplate.
-    - Timeouts are generous (30s for metadata, 120s for uploads) to
-      accommodate large files over slow connections.
+network_client.py — HTTP transport layer for ShadowDrive++ client (Week 6)
+Handles bidirectional payload transfers with Shabd's backend API.
 """
 
 import os
 import logging
 import requests
-
 import config
 
 logger = logging.getLogger(__name__)
 
-# ─── Shared Session ──────────────────────────────────────────────────────────
+# Reused connection pool session for TCP keep-alive
 _session = requests.Session()
 
-
 def health_check() -> bool:
-    """Ping the server's /health endpoint.
-
-    Returns True if the server is reachable, False otherwise.
-    Called at the start of every sync cycle.
-    """
+    """Ping the server's /health endpoint to check network availability."""
     try:
-        resp = _session.get(
-            f"{config.SERVER_BASE_URL}/health",
-            timeout=5
-        )
+        resp = _session.get(f"{config.SERVER_BASE_URL}/health", timeout=5)
         return resp.status_code == 200
     except requests.RequestException as e:
         logger.warning("Health check failed: %s", e)
         return False
 
-
-def announce_metadata(path: str, file_hash: str | None, event: str) -> tuple[bool, dict]:
-    """POST /sync/announce — tell the server about a file change.
-
-    Args:
-        path:      Relative file path (e.g. "docs/readme.txt").
-        file_hash: SHA-256 hex digest, or None for deletions.
-        event:     One of "new", "modified", "deleted".
-
-    Returns:
-        (True, response_json) on success, (False, {}) on failure.
-    """
-    payload = {"path": path, "hash": file_hash, "event": event}
+def announce_metadata(relative_path: str, file_hash: str, event_type: str) -> tuple[bool, dict]:
+    """Announce local file mutations to the server metadata repository."""
     try:
+        payload = {
+            "file_path": relative_path,
+            "file_hash": file_hash,
+            "event_type": event_type
+        }
         resp = _session.post(
             f"{config.SERVER_BASE_URL}/sync/announce",
             json=payload,
@@ -63,64 +38,31 @@ def announce_metadata(path: str, file_hash: str | None, event: str) -> tuple[boo
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("announce_metadata failed for '%s': %s", path, e)
+        logger.error("Metadata announcement failed for %s: %s", relative_path, e)
         return False, {}
 
-
-def upload_file(remote_path: str, local_path: str) -> tuple[bool, dict]:
-    """POST /sync/upload — single-shot upload for small files.
-
-    Args:
-        remote_path: The relative path the server expects (from announce).
-        local_path:  Absolute path to the local file on Windows.
-
-    Returns:
-        (True, response_json) on success, (False, {}) on failure.
-    """
+def upload_file(relative_path: str, local_path: str) -> tuple[bool, dict]:
+    """Single-shot upload handler optimized for files smaller than chunk threshold."""
     try:
+        if not os.path.exists(local_path):
+            return False, {}
         with open(local_path, "rb") as f:
-            files = {"file": (remote_path, f)}
+            files = {"file": (os.path.basename(local_path), f, "application/octet-stream")}
+            data = {"file_path": relative_path}
             resp = _session.post(
                 f"{config.SERVER_BASE_URL}/sync/upload",
                 files=files,
+                data=data,
                 timeout=120
             )
         resp.raise_for_status()
         return True, resp.json()
-    except requests.RequestException as e:
-        logger.error("upload_file failed for '%s': %s", remote_path, e)
-        return False, {}
-    except OSError as e:
-        logger.error("Cannot read local file '%s': %s", local_path, e)
+    except (requests.RequestException, OSError) as e:
+        logger.error("Single-shot upload failed for %s: %s", relative_path, e)
         return False, {}
 
-
-def upload_chunk(
-    local_path: str,
-    version_id: int,
-    chunk_index: int,
-    total_chunks: int,
-    file_hash: str,
-    offset: int,
-    chunk_size: int
-) -> tuple[bool, dict]:
-    """POST /sync/upload_chunk — upload a single chunk of a large file.
-
-    Reads `chunk_size` bytes from `local_path` starting at `offset` and
-    sends them to the server along with chunk metadata as form fields.
-
-    Args:
-        local_path:    Absolute path to the local file.
-        version_id:    Server-assigned version ID from /sync/announce.
-        chunk_index:   0-based index of this chunk.
-        total_chunks:  Total number of chunks for this file.
-        file_hash:     SHA-256 hex digest of the entire file.
-        offset:        Byte offset to start reading from.
-        chunk_size:    Number of bytes to read for this chunk.
-
-    Returns:
-        (True, response_json) on success, (False, {}) on failure.
-    """
+def upload_chunk(local_path: str, offset: int, chunk_size: int, chunk_index: int, total_chunks: int, file_hash: str, version_id: int) -> tuple[bool, dict]:
+    """Reads and transmits a slice of a multi-part file transaction."""
     try:
         with open(local_path, "rb") as f:
             f.seek(offset)
@@ -142,30 +84,45 @@ def upload_chunk(
         )
         resp.raise_for_status()
         return True, resp.json()
-    except requests.RequestException as e:
-        logger.error(
-            "upload_chunk failed (version=%d, chunk=%d/%d): %s",
-            version_id, chunk_index, total_chunks, e
-        )
-        return False, {}
-    except OSError as e:
-        logger.error("Cannot read local file '%s': %s", local_path, e)
+    except (requests.RequestException, OSError) as e:
+        logger.error("Chunk upload failed (index=%d/%d): %s", chunk_index, total_chunks, e)
         return False, {}
 
+# ─── WEEK 6 DOWNLOAD PIPELINE IMPLEMENTATION ─────────────────────────────────
 
 def get_server_metadata() -> tuple[bool, list]:
-    """GET /sync/metadata — fetch the server's file manifest.
-
-    Returns:
-        (True, list_of_file_versions) on success, (False, []) on failure.
-    """
+    """GET /sync/metadata — Fetch downstream remote server file manifest."""
     try:
-        resp = _session.get(
-            f"{config.SERVER_BASE_URL}/sync/metadata",
-            timeout=30
-        )
+        resp = _session.get(f"{config.SERVER_BASE_URL}/sync/metadata", timeout=30)
         resp.raise_for_status()
+        # Returns a structured list of files present on the remote host
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("get_server_metadata failed: %s", e)
+        logger.error("Failed to fetch server metadata manifest: %s", e)
         return False, []
+
+def download_file(relative_path: str) -> tuple[bool, bytes]:
+    """Downloads a complete single-shot file directly from the remote backend."""
+    try:
+        params = {"file_path": relative_path}
+        resp = _session.get(f"{config.SERVER_BASE_URL}/sync/download", params=params, timeout=60)
+        resp.raise_for_status()
+        return True, resp.content
+    except requests.RequestException as e:
+        logger.error("Failed downloading single-shot file %s: %s", relative_path, e)
+        return False, b""
+
+def download_chunk(file_hash: str, chunk_index: int, version_id: int) -> tuple[bool, bytes]:
+    """Downloads a designated raw block segment via discrete hash identifiers."""
+    try:
+        params = {
+            "file_hash": file_hash,
+            "chunk_index": str(chunk_index),
+            "version_id": str(version_id)
+        }
+        resp = _session.get(f"{config.SERVER_BASE_URL}/sync/download_chunk", params=params, timeout=60)
+        resp.raise_for_status()
+        return True, resp.content
+    except requests.RequestException as e:
+        logger.error("Failed downloading chunk %d for hash %s: %s", chunk_index, file_hash, e)
+        return False, b""
