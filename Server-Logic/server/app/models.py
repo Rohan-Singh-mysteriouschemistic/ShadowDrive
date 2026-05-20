@@ -36,8 +36,22 @@ class Version(Base):
     version_num = Column(Integer, nullable=False)
     hash = Column(String(64), nullable=False)
     size_bytes = Column(BigInteger, nullable=False)
-    storage_path = Column(String(500), nullable=False) #path to MinIO 
+    storage_path = Column(String(500), nullable=False) #path to MinIO
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # ─── Week 7: Conflict Resolution ─────────────────────────────────────
+    # Self-referential FK: which version was this edit based on?
+    # NULL for the first version of a file, or for conflict copies.
+    parent_version_id = Column(BigInteger, ForeignKey("versions.id"), nullable=True)
+
+    # True if this version was auto-created as a conflict copy (the "loser"
+    # in a Last-Write-Wins comparison).  The original file_path is renamed
+    # to "<name> (Conflicted copy).<ext>" for these records.
+    is_conflict_copy = Column(Boolean, default=False)
+
+    # Client-reported timestamp of when the edit was made.  Used as the
+    # tiebreaker for LWW.  Falls back to server's created_at if absent.
+    announced_at = Column(DateTime(timezone=True), nullable=True)
 
 class FileDeviceMap(Base):
     __tablename__ = "file_device_map"
