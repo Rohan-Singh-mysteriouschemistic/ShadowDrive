@@ -1,5 +1,5 @@
 """
-sync_engine.py — Dual-direction Synchronization Core Engine (Week 6)
+sync_engine.py — Dual-direction Synchronization Core Engine (Week 6/7)
 Manages outbound event queues and executes metadata diff reconstruction.
 """
 
@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import network_client
 import config
+import hash_utils  # <--- WEEK 7 ADDITION: Needed for conflict state checking
 
 @dataclass
 class UploadJob:
@@ -107,12 +108,13 @@ def _mark_synced_db(event_id: int):
     except sqlite3.Error as e:
         print(f"[DB ERROR] Mark synced exception: {e}")
 
-# ─── WEEK 6 DOWNLOAD PIPELINE logic ──────────────────────────────────────────
+# ─── WEEK 6/7 DOWNLOAD PIPELINE logic ──────────────────────────────────────────
 
 def process_downstream_downloads():
     """
     Fetches the server manifest map, calculates a diff against local metadata tables,
     and updates the local workspace folder through sequential block collection.
+    Now includes Week 7 Conflict Detection!
     """
     success, server_files = network_client.get_server_metadata()
     if not success:
@@ -123,18 +125,32 @@ def process_downstream_downloads():
 
     # Step 1: Detect deleted items on server to match locally
     server_paths = {f["file_path"] for f in server_files}
-    cur.execute("SELECT file_path FROM files")
-    local_files = [row[0] for row in cur.fetchall()]
+    cur.execute("SELECT file_path, hash FROM files")
+    local_files = cur.fetchall()
 
     _local_mutator.active = True  # Mute local event logging from handling this disk action
     try:
-        for path in local_files:
+        for path, db_hash in local_files:
             # Reconstruct relative mapping for comparison checks
             rel_path = os.path.relpath(path, config.WATCH_DIR).replace("\\", "/")
+            
             if rel_path not in server_paths:
-                print(f"[DOWNLOAD PIPELINE] Server deleted file, removing locally: {rel_path}")
-                if os.path.exists(path):
-                    os.remove(path)
+                # WEEK 7: CONFLICT CHECK ON SERVER DELETION
+                current_local_hash = hash_utils.hash_file(path)
+                
+                # If the file was changed locally AFTER the last sync, but deleted on the server -> CONFLICT!
+                if current_local_hash and current_local_hash != db_hash:
+                    timestamp = int(time.time())
+                    root, ext = os.path.splitext(path)
+                    conflict_path = f"{root}_conflict_{timestamp}{ext}"
+                    print(f"[CONFLICT] Server deleted '{rel_path}', but you modified it locally!")
+                    print(f" -> Preserving your local modifications as: {os.path.basename(conflict_path)}")
+                    os.rename(path, conflict_path)
+                else:
+                    print(f"[DOWNLOAD PIPELINE] Server deleted file, removing locally: {rel_path}")
+                    if os.path.exists(path):
+                        os.remove(path)
+                
                 cur.execute("DELETE FROM files WHERE file_path = ?", (path,))
                 conn.commit()
 
@@ -152,8 +168,31 @@ def process_downstream_downloads():
             cur.execute("SELECT hash FROM files WHERE file_path = ?", (full_local_path,))
             row = cur.fetchone()
 
-            if row is None or row[0] != remote_hash:
-                print(f"[DOWNLOAD PIPELINE] Inconsistency detected. Pulling: {rel_path}")
+            # WEEK 7: SIMULTANEOUS EDIT CONFLICT DETECTION
+            is_conflict = False
+            db_hash = None
+            if row is not None:
+                db_hash = row[0]
+                if db_hash != remote_hash:
+                    # The server has a new version. Check if we ALSO modified our local file!
+                    if os.path.exists(full_local_path):
+                        current_local_hash = hash_utils.hash_file(full_local_path)
+                        if current_local_hash and current_local_hash != db_hash:
+                            is_conflict = True
+
+            if row is None or db_hash != remote_hash:
+                
+                # Handle the Conflict Phase Before Downloading
+                if is_conflict:
+                    timestamp = int(time.time())
+                    root, ext = os.path.splitext(full_local_path)
+                    conflict_path = f"{root}_conflict_{timestamp}{ext}"
+                    print(f"[CONFLICT DETECTED] Simultaneous edits on {rel_path}")
+                    print(f" -> Moving your local work to: {os.path.basename(conflict_path)}")
+                    os.rename(full_local_path, conflict_path)
+                else:
+                    print(f"[DOWNLOAD PIPELINE] Inconsistency detected. Pulling: {rel_path}")
+
                 os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
 
                 download_success = False
