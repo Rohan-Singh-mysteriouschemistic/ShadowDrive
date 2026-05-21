@@ -2,12 +2,15 @@ import os
 import shutil
 import logging
 from fastapi import status, HTTPException, Depends, APIRouter, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from typing import List
 from .. import models, schemas
 from ..database import get_db
 from .. import storage
+from ..models import UploadStatus
+from ..worker import enqueue_verify, enqueue_assemble_and_verify
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +71,18 @@ def announce_metadata(payload: schemas.MetadataAnnounce, db: Session = Depends(g
     """
     user_id = DEFAULT_USER_ID
 
+    # Ensure SQLite default 0 for new files is translated to NULL for PostgreSQL
+    if payload.base_version_id == 0:
+        payload.base_version_id = None
+
     try:
+        # ── Step 0: Auto-create dummy user if missing (Week 7 dev) ───────
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            user = models.User(id=user_id, email="test@example.com", hashed_password="pwd")
+            db.add(user)
+            db.commit()
+
         # ── Step 1: Find or create the File record ───────────────────────
         file_record = db.query(models.File).filter(
             models.File.user_id == user_id,
@@ -113,12 +127,15 @@ def announce_metadata(payload: schemas.MetadataAnnounce, db: Session = Depends(g
             is_empty_file = (incoming_hash == EMPTY_FILE_SHA256)
 
             if existing_version.size_bytes == 0 and not is_empty_file:
-                # Stale pending version from an interrupted sync cycle.
-                db.query(models.ChunkUpload).filter(
-                    models.ChunkUpload.version_id == existing_version.id
-                ).delete()
-                db.delete(existing_version)
-                db.flush()
+                # Still uploading. Return the SAME version_id to resume/continue!
+                file_record.updated_at = func.now()
+                db.commit()
+                return schemas.MetadataResponse(
+                    status="accepted",
+                    file_id=file_record.id,
+                    version_id=existing_version.id,
+                    upload_required=True
+                )
             else:
                 # Server genuinely has this version (or it's a 0-byte file).
                 file_record.updated_at = func.now()
@@ -366,7 +383,7 @@ def _make_conflict_path(original_path: str) -> str:
     return f"{base} (Conflicted copy){ext}"
 
 
-@router.post("/upload", status_code=status.HTTP_200_OK)
+@router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
 def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Rohan's network_client.py calls this with:
@@ -375,10 +392,12 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
     The filename from the multipart header IS the remote_path (the relative
     file path the client wants to store on the server).
 
-    Week 5 Update: Writes to MinIO instead of local disk.
-    Small files (single-shot upload) still use this endpoint.
-    Large files should use /upload_chunk instead.
+    Week 8 Update: Non-blocking.  Writes bytes to MinIO, then enqueues a
+    background job to verify the SHA-256 hash.  Returns 202 Accepted
+    immediately — the client can poll GET /sync/upload/status/{version_id}
+    to check when the version transitions to 'complete'.
 
+    Week 5 preserved: Small files still use this endpoint.
     Week 4 Hardening preserved:
         - Wraps all DB mutations in try/except with rollback.
         - Atomic write semantics provided by MinIO's PUT (S3 PUTs are atomic).
@@ -423,12 +442,27 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
         storage_key = version_record.storage_path
         storage.put_object(storage_key, file_bytes)
 
-        # ── Step 4: Update version record ────────────────────────────────
+        # ── Step 4: Update version record & transition to 'processing' ──
         version_record.size_bytes = total_bytes
         version_record.storage_path = storage_key
+        version_record.upload_status = UploadStatus.processing
+
+        # ── Step 5: Enqueue background hash verification ─────────────────
+        job_id = enqueue_verify(version_record.id, version_record.hash)
+        version_record.job_id = job_id
         db.commit()
 
-        return {"status": "uploaded", "file": remote_path, "bytes": total_bytes}
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={
+                "status": "processing",
+                "file": remote_path,
+                "bytes": total_bytes,
+                "version_id": version_record.id,
+                "job_id": job_id,
+                "message": "Upload received. Background verification in progress.",
+            }
+        )
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is
@@ -537,48 +571,49 @@ def upload_chunk(
 
         db.flush()
 
-        # ── Step 4: Check if all chunks received ────────────────────────
+        # ── Step 4: Mark version as 'uploading' (Week 8) ─────────────────
+        if version_record.upload_status == UploadStatus.pending:
+            version_record.upload_status = UploadStatus.uploading
+
+        # ── Step 5: Check if all chunks received ────────────────────────
         received_count = db.query(models.ChunkUpload).filter(
             models.ChunkUpload.version_id == version_id
         ).count()
 
         assembled = False
+        job_id = None
 
         if received_count >= total_chunks:
-            # All chunks received — trigger assembly
-            all_chunks = db.query(models.ChunkUpload).filter(
-                models.ChunkUpload.version_id == version_id
-            ).order_by(models.ChunkUpload.chunk_index.asc()).all()
+            # All chunks received — enqueue background assembly + verify
+            # instead of doing it inline (Week 8 async upgrade).
+            version_record.upload_status = UploadStatus.processing
 
-            chunk_keys = [c.chunk_storage_key for c in all_chunks]
-            final_key = version_record.storage_path  # e.g. "1/docs/readme.txt/v2"
-
-            total_bytes = storage.assemble_chunks(chunk_keys, final_key)
-
-            # Update version record with final assembled size
-            version_record.size_bytes = total_bytes
+            job_id = enqueue_assemble_and_verify(
+                version_id, file_hash
+            )
+            version_record.job_id = job_id
             assembled = True
 
-            # Clean up chunk records from the database
-            db.query(models.ChunkUpload).filter(
-                models.ChunkUpload.version_id == version_id
-            ).delete()
-
             logger.info(
-                "Assembled file version_id=%d (%d chunks, %d bytes)",
-                version_id, total_chunks, total_bytes
+                "All %d chunks received for version_id=%d. "
+                "Enqueued assembly job=%s.",
+                total_chunks, version_id, job_id
             )
 
         db.commit()
 
-        return schemas.ChunkUploadResponse(
-            status="assembled" if assembled else "chunk_received",
-            version_id=version_id,
-            chunk_index=chunk_index,
-            chunks_received=min(received_count, total_chunks),
-            total_chunks=total_chunks,
-            assembled=assembled
-        )
+        response_data = {
+            "status": "processing" if assembled else "chunk_received",
+            "version_id": version_id,
+            "chunk_index": chunk_index,
+            "chunks_received": min(received_count, total_chunks),
+            "total_chunks": total_chunks,
+            "assembled": assembled,
+        }
+        if job_id:
+            response_data["job_id"] = job_id
+
+        return schemas.ChunkUploadResponse(**response_data)
 
     except HTTPException:
         raise
@@ -654,16 +689,24 @@ def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
     user_id = DEFAULT_USER_ID
 
     try:
-        # ── Step 1: Validate device ──────────────────────────────────────
+        # ── Step 1: Validate device (and auto-create for Week 7 dev) ─────
         device = db.query(models.Device).filter(
             models.Device.id == device_id
         ).first()
 
         if not device:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Device {device_id} not found."
-            )
+            # Auto-create dummy user if missing
+            user = db.query(models.User).filter(models.User.id == user_id).first()
+            if not user:
+                user = models.User(id=user_id, email="test@example.com", hashed_password="pwd")
+                db.add(user)
+                db.flush()
+            
+            # Auto-create dummy device
+            device = models.Device(id=device_id, user_id=user_id, device_name="Test-Device-1")
+            db.add(device)
+            db.commit()
+            logger.info("Auto-created dummy User 1 and Device 1 for sync operations.")
 
         # ── Step 2: Build canonical server state ─────────────────────────
         # All non-deleted files for this user with a completed version
@@ -837,3 +880,41 @@ def ack_sync(
     except Exception:
         db.rollback()
         raise
+
+
+# ─── Week 8: Upload Status Polling Endpoint ─────────────────────────────────
+
+@router.get("/upload/status/{version_id}", status_code=status.HTTP_200_OK)
+def get_upload_status(version_id: int, db: Session = Depends(get_db)):
+    """
+    GET /sync/upload/status/{version_id}
+
+    Allows clients to poll the processing state of an upload.  After
+    POST /sync/upload returns 202 Accepted, the client can call this
+    endpoint to check whether the background worker has finished
+    verifying the file hash.
+
+    Returns:
+        upload_status: pending | uploading | processing | complete | failed
+        version_id:    The version being tracked.
+        job_id:        The RQ job ID (if a job was enqueued).
+        size_bytes:    Final file size (populated once assembly/upload finishes).
+    """
+    version = db.query(models.Version).filter(
+        models.Version.id == version_id
+    ).first()
+
+    if not version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version {version_id} not found."
+        )
+
+    return {
+        "version_id": version.id,
+        "upload_status": version.upload_status.value if version.upload_status else "unknown",
+        "job_id": version.job_id,
+        "size_bytes": version.size_bytes,
+        "hash": version.hash,
+        "storage_path": version.storage_path,
+    }

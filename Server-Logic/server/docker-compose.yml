@@ -28,6 +28,22 @@ services:
     volumes:
       - minio_data:/data
 
+  # The Job Queue (Redis) — Week 8
+  redis:
+    image: redis:7-alpine
+    container_name: shadow_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   postgres_data:
   minio_data:
+  redis_data:

@@ -5,12 +5,12 @@ echo "   Starting ShadowDrive++ Project"
 echo "=================================================="
 
 echo ""
-echo "[1/3] Starting Docker containers (PostgreSQL & MinIO)..."
+echo "[1/4] Starting Docker containers (PostgreSQL, MinIO & Redis)..."
 cd "Server-Logic/server" || exit
 docker-compose up -d
 
 echo ""
-echo "[2/3] Starting FastAPI Backend Server..."
+echo "[2/4] Starting FastAPI Backend Server..."
 # Run the FastAPI server in the background (or in a new terminal if supported)
 if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
     start cmd //k "uvicorn app.main:app --reload"
@@ -25,7 +25,22 @@ else
 fi
 
 echo ""
-echo "[3/3] Starting Client Watcher Agent..."
+echo "[3/4] Starting RQ Background Worker..."
+# Run the RQ worker in the background (or in a new terminal if supported)
+if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
+    start cmd //k "rq worker shadowdrive-jobs --with-scheduler"
+elif command -v gnome-terminal &> /dev/null; then
+    gnome-terminal -- bash -c "rq worker shadowdrive-jobs --with-scheduler; exec bash" &
+elif command -v xterm &> /dev/null; then
+    xterm -e "rq worker shadowdrive-jobs --with-scheduler" &
+else
+    # Fallback to running in the background and logging
+    rq worker shadowdrive-jobs --with-scheduler > worker.log 2>&1 &
+    echo "Worker started in background (see worker.log)"
+fi
+
+echo ""
+echo "[4/4] Starting Client Watcher Agent..."
 cd "../../Client-Logic" || exit
 if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
     start cmd //k "python watcher.py"

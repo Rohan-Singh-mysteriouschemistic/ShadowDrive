@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, BigInteger, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, BigInteger, UniqueConstraint, Enum as SAEnum
+import enum
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -29,6 +30,23 @@ class File(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     __table_args__ = (UniqueConstraint('user_id', 'file_path', name='unique_path_per_user'),)
 
+class UploadStatus(str, enum.Enum):
+    """Upload lifecycle states for a Version record (Week 8).
+
+    pending    → /announce created the row; no bytes received yet.
+    uploading  → At least one chunk has arrived; transfer in progress.
+    processing → All bytes received; background worker is verifying hash /
+                 generating thumbnail.
+    complete   → Worker finished successfully; version is ready for sync.
+    failed     → Worker detected a hash mismatch or an unrecoverable error.
+    """
+    pending    = "pending"
+    uploading  = "uploading"
+    processing = "processing"
+    complete   = "complete"
+    failed     = "failed"
+
+
 class Version(Base):
     __tablename__ = "versions"
     id = Column(BigInteger, primary_key=True, index=True)
@@ -38,6 +56,16 @@ class Version(Base):
     size_bytes = Column(BigInteger, nullable=False)
     storage_path = Column(String(500), nullable=False) #path to MinIO
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # ─── Week 8: Async Upload Tracking ────────────────────────────────────
+    upload_status = Column(
+        SAEnum(UploadStatus, name="upload_status_enum", create_constraint=True),
+        nullable=False,
+        server_default="pending"
+    )
+    # RQ job ID — allows polling /sync/upload/status/<version_id> to check
+    # whether the background worker has finished.
+    job_id = Column(String(64), nullable=True)
 
     # ─── Week 7: Conflict Resolution ─────────────────────────────────────
     # Self-referential FK: which version was this edit based on?
