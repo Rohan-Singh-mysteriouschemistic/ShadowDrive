@@ -22,6 +22,7 @@ Thumbs.db
 
 # Ignore personal study documentation
 docs/
+shadowdrive-ui/
 
 # Ignore temporary AI implementation logs
 BMAD/implementation-artifacts/
