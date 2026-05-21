@@ -23,8 +23,9 @@ CHUNK_THRESHOLD = CHUNK_SIZE
 SYNC_INTERVAL_SECONDS = int(os.getenv("SHADOWDRIVE_SYNC_INTERVAL", "10"))
 
 # ─── Resilience & Failover ──────────────────────────────────────────────────
-UPLOAD_MAX_RETRIES = int(os.getenv("SHADOWDRIVE_UPLOAD_RETRIES", "3"))
+UPLOAD_MAX_RETRIES = int(os.getenv("SHADOWDRIVE_UPLOAD_RETRIES", "5"))  # Increased to 5 as default for network retries
 RETRY_BACKOFF_SECONDS = 2
+RETRY_MAX_BACKOFF_SECONDS = 60
 
 # ─── Hashing ─────────────────────────────────────────────────────────────────
 HASH_ALGORITHM = "sha256"

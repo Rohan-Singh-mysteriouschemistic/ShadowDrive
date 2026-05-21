@@ -23,8 +23,24 @@ class UploadJob:
     file_size: int
     event_id: int        
     retry_count: int = 0
+    completed_chunks: set = None
 
 upload_queue: queue.Queue = queue.Queue()
+
+# Thread-safe in-flight tracking set to prevent queue bloat
+_in_flight_events = set()
+_in_flight_lock = threading.Lock()
+
+def _mark_in_flight(event_id: int) -> bool:
+    with _in_flight_lock:
+        if event_id in _in_flight_events:
+            return False
+        _in_flight_events.add(event_id)
+        return True
+
+def _clear_in_flight(event_id: int):
+    with _in_flight_lock:
+        _in_flight_events.discard(event_id)
 
 # Thread-local storage flag to prevent downstream downloads from causing loop alerts
 _local_mutator = threading.local()
@@ -38,30 +54,48 @@ def _upload_worker():
     while True:
         job = upload_queue.get()
         try:
+            # 1. Verification Phase: Check if file still exists
             if not os.path.exists(job.local_path):
                 print(f"[UPLOAD WORKER] File vanished before transit: {job.local_path}")
                 _mark_synced_db(job.event_id)
-                upload_queue.task_done()
+                _clear_in_flight(job.event_id)
                 continue
                 
+            # 2. Obsolete Check Phase: If hash has changed locally, discard this job
+            current_hash = hash_utils.hash_file(job.local_path)
+            if current_hash != job.file_hash:
+                print(f"[UPLOAD WORKER] Job for {job.remote_path} is obsolete (local hash changed from {job.file_hash[:8]} to {current_hash[:8] if current_hash else 'None'}). Discarding.")
+                _mark_synced_db(job.event_id)
+                _clear_in_flight(job.event_id)
+                continue
+
+            # Initialize chunk completion tracking for this job if not set
+            if job.completed_chunks is None:
+                job.completed_chunks = set()
+
             if job.file_size < config.CHUNK_THRESHOLD:
                 success, data = network_client.upload_file(job.remote_path, job.local_path)
                 if success:
                     print(f"[UPLOAD SUCCESS] {job.remote_path} (single-shot)")
                     _mark_synced_db(job.event_id)
+                    _clear_in_flight(job.event_id)
                 else:
-                    _handle_failed_job(job)
+                    _handle_failed_job(job, data)
             else:
                 # Chunked upload workflow execution path
                 total_chunks = (job.file_size + config.CHUNK_SIZE - 1) // config.CHUNK_SIZE
-                print(f"[UPLOAD CHUNKED] Spooling {total_chunks} parts for {job.remote_path}")
+                print(f"[UPLOAD CHUNKED] Spooling {total_chunks} parts for {job.remote_path} (already finished: {len(job.completed_chunks)})")
                 
                 all_chunks_succeeded = True
+                last_error_data = {}
                 for i in range(total_chunks):
+                    if i in job.completed_chunks:
+                        continue
+                        
                     offset = i * config.CHUNK_SIZE
                     current_chunk_size = min(config.CHUNK_SIZE, job.file_size - offset)
                     
-                    chunk_ok, _ = network_client.upload_chunk(
+                    chunk_ok, chunk_data = network_client.upload_chunk(
                         local_path=job.local_path,
                         offset=offset,
                         chunk_size=current_chunk_size,
@@ -70,32 +104,61 @@ def _upload_worker():
                         file_hash=job.file_hash,
                         version_id=job.version_id
                     )
-                    if not chunk_ok:
-                        print(f"[UPLOAD CHUNKED] Failure on part index {i}")
+                    if chunk_ok:
+                        job.completed_chunks.add(i)
+                    else:
+                        print(f"[UPLOAD CHUNKED] Failure on part index {i}/{total_chunks}")
                         all_chunks_succeeded = False
+                        last_error_data = chunk_data
                         break
                 
                 if all_chunks_succeeded:
                     print(f"[UPLOAD CHUNKED SUCCESS] Completed all blocks for {job.remote_path}")
                     _mark_synced_db(job.event_id)
+                    _clear_in_flight(job.event_id)
                 else:
-                    _handle_failed_job(job)
+                    _handle_failed_job(job, last_error_data)
                     
         except Exception as e:
             print(f"[UPLOAD ERROR] Unexpected crash in transiting worker: {e}")
-            _handle_failed_job(job)
+            _handle_failed_job(job, {"error": str(e), "retriable": True})
         finally:
             upload_queue.task_done()
 
-def _handle_failed_job(job: UploadJob):
+def _handle_failed_job(job: UploadJob, error_data: dict):
     """Processes backoff retry increments on critical connection dropped states."""
+    import random
+    retriable = error_data.get("retriable", True)
+    error_msg = error_data.get("error", "Unknown transport error")
+
+    if not retriable:
+        print(f"[FATAL FAILURE] Non-retriable error for {job.remote_path}: {error_msg}. Discarding job.")
+        _mark_synced_db(job.event_id)
+        _clear_in_flight(job.event_id)
+        return
+
     if job.retry_count < config.UPLOAD_MAX_RETRIES:
         job.retry_count += 1
-        print(f"[RETRY QUEUE] Queued retry #{job.retry_count} for {job.remote_path}")
-        time.sleep(config.RETRY_BACKOFF_SECONDS)
-        upload_queue.put(job)
+        
+        # Calculate exponential backoff capped at config.RETRY_MAX_BACKOFF_SECONDS
+        base_backoff = config.RETRY_BACKOFF_SECONDS
+        max_backoff = getattr(config, "RETRY_MAX_BACKOFF_SECONDS", 60)
+        
+        backoff = min(max_backoff, base_backoff * (2 ** (job.retry_count - 1)))
+        jitter = random.uniform(0.1, 1.0)
+        total_backoff = backoff + jitter
+        
+        print(f"[RETRY QUEUE] Queued retry #{job.retry_count} for {job.remote_path} in {total_backoff:.2f}s due to: {error_msg}")
+        
+        def _re_enqueue():
+            upload_queue.put(job)
+            
+        t = threading.Timer(total_backoff, _re_enqueue)
+        t.daemon = True
+        t.start()
     else:
-        print(f"[FATAL FAILURE] Maximum fallback constraints hit for {job.remote_path}")
+        print(f"[FATAL FAILURE] Maximum fallback constraints hit for {job.remote_path}. Releasing in-flight hold to retry in next sync cycle.")
+        _clear_in_flight(job.event_id)
 
 def _mark_synced_db(event_id: int):
     """Flags internal staging entries completed inside tracking table."""
@@ -243,6 +306,9 @@ def start_sync_loop():
 
                 for event in pending_events:
                     event_id = event["id"]
+                    if event_id in _in_flight_events:
+                        continue
+
                     event_type = event["event_type"]
                     full_path = event["file_path"]
                     file_hash = event["hash"]
@@ -282,6 +348,7 @@ def start_sync_loop():
                             file_size=file_size,
                             event_id=event_id
                         )
+                        _mark_in_flight(event_id)
                         upload_queue.put(job)
                     else:
                         _mark_synced_db(event_id)
