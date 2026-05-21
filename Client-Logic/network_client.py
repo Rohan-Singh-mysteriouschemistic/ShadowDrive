@@ -49,7 +49,7 @@ def upload_file(relative_path: str, local_path: str) -> tuple[bool, dict]:
     """Single-shot upload handler optimized for files smaller than chunk threshold."""
     try:
         if not os.path.exists(local_path):
-            return False, {}
+            return False, {"error": "Local file does not exist", "retriable": False}
         with open(local_path, "rb") as f:
             files = {"file": (os.path.basename(local_path), f, "application/octet-stream")}
             data = {"file_path": relative_path}
@@ -61,9 +61,17 @@ def upload_file(relative_path: str, local_path: str) -> tuple[bool, dict]:
             )
         resp.raise_for_status()
         return True, resp.json()
+    except requests.exceptions.HTTPError as e:
+        logger.error("Single-shot upload HTTP error for %s: %s", relative_path, e)
+        status_code = e.response.status_code if e.response is not None else 500
+        # Retry on 5xx (server error) or 429 (Too Many Requests), but not on 4xx (client errors)
+        retriable = (status_code >= 500 or status_code == 429)
+        return False, {"error": str(e), "retriable": retriable, "status_code": status_code}
     except (requests.RequestException, OSError) as e:
         logger.error("Single-shot upload failed for %s: %s", relative_path, e)
-        return False, {}
+        # Transient network issues/timeouts are retriable; local OSErrors are usually not
+        retriable = isinstance(e, requests.RequestException)
+        return False, {"error": str(e), "retriable": retriable}
 
 def upload_chunk(local_path: str, offset: int, chunk_size: int, chunk_index: int, total_chunks: int, file_hash: str, version_id: int) -> tuple[bool, dict]:
     """Reads and transmits a slice of a multi-part file transaction."""
@@ -88,9 +96,15 @@ def upload_chunk(local_path: str, offset: int, chunk_size: int, chunk_index: int
         )
         resp.raise_for_status()
         return True, resp.json()
+    except requests.exceptions.HTTPError as e:
+        logger.error("Chunk upload HTTP error (index=%d/%d): %s", chunk_index, total_chunks, e)
+        status_code = e.response.status_code if e.response is not None else 500
+        retriable = (status_code >= 500 or status_code == 429)
+        return False, {"error": str(e), "retriable": retriable, "status_code": status_code}
     except (requests.RequestException, OSError) as e:
         logger.error("Chunk upload failed (index=%d/%d): %s", chunk_index, total_chunks, e)
-        return False, {}
+        retriable = isinstance(e, requests.RequestException)
+        return False, {"error": str(e), "retriable": retriable}
 
 # ─── WEEK 6 DOWNLOAD PIPELINE IMPLEMENTATION ─────────────────────────────────
 
