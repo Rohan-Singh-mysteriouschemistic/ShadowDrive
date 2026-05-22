@@ -23,10 +23,16 @@ echo [3/4] Starting RQ Background Worker...
 start "ShadowDrive RQ Worker" cmd /k "rq worker shadowdrive-jobs --with-scheduler"
 
 echo.
-echo [4/4] Starting Client Watcher Agent...
+echo [4/5] Starting Client Watcher Agent...
 cd "..\..\Client-Logic"
 :: Using start to open another command prompt window for the client watcher
 start "ShadowDrive Client Watcher" cmd /k "python watcher.py"
+
+echo.
+echo [5/5] Starting UI Landing Page...
+cd "..\shadowdrive-ui"
+:: Using start to open the UI in dev mode
+start "ShadowDrive UI" cmd /k "npm run dev -- --open"
 
 echo.
 echo All services have been launched in separate windows!
