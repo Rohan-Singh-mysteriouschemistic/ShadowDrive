@@ -29,7 +29,17 @@ async def lifespan(app: FastAPI):
     yield
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="ShadowDrive++ Server", version="0.5.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def get_db():
     db = SessionLocal()
@@ -46,9 +56,10 @@ def health_check():
 
 
 # ─── Router Registration ────────────────────────────────────────────────────
-from .routers import user, device, sync
+from .routers import user, device, sync, auth
 
 app.include_router(user.router)
 app.include_router(device.router)
 app.include_router(sync.router)
+app.include_router(auth.router)
 

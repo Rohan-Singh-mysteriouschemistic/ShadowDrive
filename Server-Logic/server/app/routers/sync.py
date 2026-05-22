@@ -11,6 +11,7 @@ from ..database import get_db
 from .. import storage
 from ..models import UploadStatus
 from ..worker import enqueue_verify, enqueue_assemble_and_verify
+from ..services.metadata import process_metadata_sync
 
 logger = logging.getLogger(__name__)
 
@@ -28,359 +29,31 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # ─── Hardcoded user_id for Week 3-5 ──────────────────────────────────────────
 # Rohan's client does not send auth headers or user_id yet.
 # Until auth is implemented, we assume a single user (id=1).
-DEFAULT_USER_ID = 1
-
-# ─── Constants for the 0-byte file edge case ─────────────────────────────────
-EMPTY_FILE_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+# NOTE: DEFAULT_USER_ID and EMPTY_FILE_SHA256 are now owned by
+#       services/metadata.py.  Keep this reference only for the
+#       remaining endpoints in this router that still use them directly.
+from ..services.metadata import DEFAULT_USER_ID, EMPTY_FILE_SHA256
 
 
 @router.post(
     "/announce",
     status_code=status.HTTP_201_CREATED,
-    response_model=schemas.MetadataResponse
+    response_model=schemas.MetadataResponse,
 )
-def announce_metadata(payload: schemas.MetadataAnnounce, db: Session = Depends(get_db)):
+def announce_metadata(
+    payload: schemas.MetadataAnnounce,
+    db: Session = Depends(get_db),
+) -> schemas.MetadataResponse:
     """
-    Rohan's sync_engine.py calls this with:
-        {"path": "filename.txt", "hash": "abc...", "event": "new|modified|deleted",
-         "base_version_id": 42, "client_modified_at": "2026-05-20T10:00:00Z"}
+    Receive a file-change announcement from a client device.
 
-    Week 7 Conflict Resolution Logic:
-        When a client announces a "modified" or "new" event with a
-        base_version_id, the server checks if that base matches the
-        current latest completed version for the file.
+    Validates the incoming ``MetadataAnnounce`` payload and delegates all
+    business logic (deduplication, conflict detection, LWW resolution,
+    database writes) to ``services.metadata.process_metadata_sync``.
 
-        - MATCH (or first version): No conflict → normal accept flow.
-        - MISMATCH: Split-brain detected.  Two devices edited the same
-          file from different bases.  Resolution:
-            1. Compare timestamps (LWW): client_modified_at vs the
-               server's latest version's created_at.
-            2. The WINNER keeps the original file_path and becomes
-               the new canonical version.
-            3. The LOSER's version is saved under a conflict-copy path:
-               "report (Conflicted copy).pdf"
-            4. Both versions require upload.  The response tells the
-               client which version is the winner and provides the
-               conflict copy's metadata.
-
-    Preserved from Weeks 3-5:
-        - Hash deduplication
-        - 0-byte file handling
-        - Interrupted upload recovery
-        - try/except with db.rollback()
+    The JSON input/output contract is unchanged from previous versions.
     """
-    user_id = DEFAULT_USER_ID
-
-    # Ensure SQLite default 0 for new files is translated to NULL for PostgreSQL
-    if payload.base_version_id == 0:
-        payload.base_version_id = None
-
-    try:
-        # ── Step 0: Auto-create dummy user if missing (Week 7 dev) ───────
-        user = db.query(models.User).filter(models.User.id == user_id).first()
-        if not user:
-            user = models.User(id=user_id, email="test@example.com", hashed_password="pwd")
-            db.add(user)
-            db.commit()
-
-        # ── Step 1: Find or create the File record ───────────────────────
-        file_record = db.query(models.File).filter(
-            models.File.user_id == user_id,
-            models.File.file_path == payload.path
-        ).first()
-
-        if not file_record:
-            file_record = models.File(
-                user_id=user_id,
-                file_path=payload.path,
-                is_deleted=False
-            )
-            db.add(file_record)
-            db.flush()  # generate file_record.id without committing
-
-        # ── Step 2: Handle deletion events ───────────────────────────────
-        if payload.event == "deleted":
-            file_record.is_deleted = True
-            file_record.updated_at = func.now()
-            db.commit()
-
-            return schemas.MetadataResponse(
-                status="deleted_acknowledged",
-                file_id=file_record.id,
-                version_id=None,
-                upload_required=False
-            )
-
-        # ── Step 3: Un-delete if file reappears ──────────────────────────
-        if file_record.is_deleted:
-            file_record.is_deleted = False
-
-        # ── Step 4: Hash deduplication check ─────────────────────────────
-        incoming_hash = payload.hash or EMPTY_FILE_SHA256
-        existing_version = db.query(models.Version).filter(
-            models.Version.file_id == file_record.id,
-            models.Version.hash == incoming_hash
-        ).first()
-
-        if existing_version:
-            # ── Interrupted Upload Recovery (Week 4, Scenario B) ─────────
-            is_empty_file = (incoming_hash == EMPTY_FILE_SHA256)
-
-            if existing_version.size_bytes == 0 and not is_empty_file:
-                # Still uploading. Return the SAME version_id to resume/continue!
-                file_record.updated_at = func.now()
-                db.commit()
-                return schemas.MetadataResponse(
-                    status="accepted",
-                    file_id=file_record.id,
-                    version_id=existing_version.id,
-                    upload_required=True
-                )
-            else:
-                # Server genuinely has this version (or it's a 0-byte file).
-                file_record.updated_at = func.now()
-                db.commit()
-
-                return schemas.MetadataResponse(
-                    status="already_synced",
-                    file_id=file_record.id,
-                    version_id=existing_version.id,
-                    upload_required=False
-                )
-
-        # ── Step 5: Handle 0-byte files (Scenario A) ────────────────────
-        if incoming_hash == EMPTY_FILE_SHA256:
-            latest_version = db.query(models.Version).filter(
-                models.Version.file_id == file_record.id
-            ).order_by(models.Version.version_num.desc()).first()
-
-            next_version_num = (latest_version.version_num + 1) if latest_version else 1
-            storage_key = f"{user_id}/{payload.path}/v{next_version_num}"
-
-            new_version = models.Version(
-                file_id=file_record.id,
-                version_num=next_version_num,
-                hash=incoming_hash,
-                size_bytes=0,
-                storage_path=storage_key,
-                parent_version_id=payload.base_version_id,
-                announced_at=payload.client_modified_at
-            )
-            db.add(new_version)
-            file_record.updated_at = func.now()
-            db.commit()
-            db.refresh(new_version)
-
-            try:
-                storage.put_object(storage_key, b"")
-            except Exception as e:
-                logger.warning("Failed to write empty object to MinIO: %s", e)
-
-            return schemas.MetadataResponse(
-                status="accepted_empty",
-                file_id=file_record.id,
-                version_id=new_version.id,
-                upload_required=False
-            )
-
-        # ── Step 6: CONFLICT DETECTION (Week 7) ─────────────────────────
-        # Get the server's latest COMPLETED version for this file
-        server_latest = db.query(models.Version).filter(
-            models.Version.file_id == file_record.id,
-            models.Version.size_bytes > 0
-        ).order_by(models.Version.version_num.desc()).first()
-
-        # Determine next version number (from ANY version, including pending)
-        any_latest = db.query(models.Version).filter(
-            models.Version.file_id == file_record.id
-        ).order_by(models.Version.version_num.desc()).first()
-        next_version_num = (any_latest.version_num + 1) if any_latest else 1
-
-        # ── Check for split-brain ────────────────────────────────────────
-        # A conflict exists when ALL of these are true:
-        #   1. The file already has a completed version on the server.
-        #   2. The client provided a base_version_id.
-        #   3. The client's base does NOT match the server's latest.
-        # This means two devices forked from different points.
-
-        is_conflict = (
-            server_latest is not None
-            and payload.base_version_id is not None
-            and payload.base_version_id != server_latest.id
-        )
-
-        if is_conflict:
-            # ── LAST-WRITE-WINS (LWW) Resolution ────────────────────────
-            # Compare the incoming client timestamp against the server's
-            # latest version timestamp.  The later one wins.
-            from datetime import datetime, timezone
-
-            client_ts = payload.client_modified_at
-            server_ts = server_latest.announced_at or server_latest.created_at
-
-            # Normalize: if client didn't send a timestamp, use "now" (server arrival)
-            if client_ts is None:
-                client_ts = datetime.now(timezone.utc)
-            # Ensure both are offset-aware for comparison
-            if client_ts.tzinfo is None:
-                client_ts = client_ts.replace(tzinfo=timezone.utc)
-            if server_ts.tzinfo is None:
-                server_ts = server_ts.replace(tzinfo=timezone.utc)
-
-            client_wins = client_ts >= server_ts
-
-            # ── Build the conflict copy path ─────────────────────────────
-            # "report.pdf" → "report (Conflicted copy).pdf"
-            conflict_path = _make_conflict_path(payload.path)
-
-            # Ensure a File record exists for the conflict copy
-            conflict_file = db.query(models.File).filter(
-                models.File.user_id == user_id,
-                models.File.file_path == conflict_path
-            ).first()
-            if not conflict_file:
-                conflict_file = models.File(
-                    user_id=user_id,
-                    file_path=conflict_path,
-                    is_deleted=False
-                )
-                db.add(conflict_file)
-                db.flush()
-
-            if client_wins:
-                # CLIENT WINS: the incoming version takes the original path.
-                # The server's current latest becomes the conflict copy.
-                #
-                # Create a new version under the CONFLICT file pointing
-                # to the server's existing bytes (same storage_path).
-                conflict_version = models.Version(
-                    file_id=conflict_file.id,
-                    version_num=1,
-                    hash=server_latest.hash,
-                    size_bytes=server_latest.size_bytes,
-                    storage_path=server_latest.storage_path,
-                    parent_version_id=server_latest.parent_version_id,
-                    is_conflict_copy=True,
-                    announced_at=server_ts
-                )
-                db.add(conflict_version)
-                db.flush()
-                db.refresh(conflict_version)
-
-                # Now create the WINNER version on the original file
-                winner_storage_key = f"{user_id}/{payload.path}/v{next_version_num}"
-                winner_version = models.Version(
-                    file_id=file_record.id,
-                    version_num=next_version_num,
-                    hash=incoming_hash,
-                    size_bytes=0,  # Pending upload
-                    storage_path=winner_storage_key,
-                    parent_version_id=payload.base_version_id,
-                    is_conflict_copy=False,
-                    announced_at=client_ts
-                )
-                db.add(winner_version)
-                file_record.updated_at = func.now()
-                db.commit()
-                db.refresh(winner_version)
-
-                logger.info(
-                    "CONFLICT RESOLVED (LWW): client wins for '%s'. "
-                    "Server version saved as conflict copy '%s'.",
-                    payload.path, conflict_path
-                )
-
-                return schemas.MetadataResponse(
-                    status="conflict_resolved",
-                    file_id=file_record.id,
-                    version_id=winner_version.id,
-                    upload_required=True,
-                    conflict_info=schemas.ConflictInfo(
-                        conflict_file_path=conflict_path,
-                        conflict_version_id=conflict_version.id,
-                        winner_version_id=winner_version.id,
-                        resolution="lww"
-                    )
-                )
-
-            else:
-                # SERVER WINS: the server's latest stays as the canonical.
-                # The incoming client version becomes the conflict copy.
-                conflict_storage_key = f"{user_id}/{conflict_path}/v1"
-                conflict_version = models.Version(
-                    file_id=conflict_file.id,
-                    version_num=1,
-                    hash=incoming_hash,
-                    size_bytes=0,  # Pending upload
-                    storage_path=conflict_storage_key,
-                    parent_version_id=payload.base_version_id,
-                    is_conflict_copy=True,
-                    announced_at=client_ts
-                )
-                db.add(conflict_version)
-                file_record.updated_at = func.now()
-                db.commit()
-                db.refresh(conflict_version)
-
-                logger.info(
-                    "CONFLICT RESOLVED (LWW): server wins for '%s'. "
-                    "Client version saved as conflict copy '%s'.",
-                    payload.path, conflict_path
-                )
-
-                return schemas.MetadataResponse(
-                    status="conflict_resolved",
-                    file_id=file_record.id,
-                    version_id=conflict_version.id,
-                    upload_required=True,
-                    conflict_info=schemas.ConflictInfo(
-                        conflict_file_path=conflict_path,
-                        conflict_version_id=conflict_version.id,
-                        winner_version_id=server_latest.id,
-                        resolution="lww"
-                    )
-                )
-
-        # ── Step 7: No conflict — normal accept ─────────────────────────
-        storage_key = f"{user_id}/{payload.path}/v{next_version_num}"
-
-        new_version = models.Version(
-            file_id=file_record.id,
-            version_num=next_version_num,
-            hash=incoming_hash,
-            size_bytes=0,  # Will be updated when the actual file is uploaded
-            storage_path=storage_key,
-            parent_version_id=payload.base_version_id,
-            announced_at=payload.client_modified_at
-        )
-        db.add(new_version)
-        file_record.updated_at = func.now()
-        db.commit()
-        db.refresh(new_version)
-
-        return schemas.MetadataResponse(
-            status="accepted",
-            file_id=file_record.id,
-            version_id=new_version.id,
-            upload_required=True
-        )
-
-    except Exception:
-        # ── Clean rollback on any error ──────────────────────────────────
-        db.rollback()
-        raise
-
-
-def _make_conflict_path(original_path: str) -> str:
-    """Convert 'docs/report.pdf' → 'docs/report (Conflicted copy).pdf'
-
-    If the path has no extension: 'README' → 'README (Conflicted copy)'
-    If a conflict copy already exists, subsequent conflicts will overwrite
-    it (the old conflict copy is already versioned in MinIO).
-    """
-    import os
-    base, ext = os.path.splitext(original_path)
-    return f"{base} (Conflicted copy){ext}"
+    return process_metadata_sync(db=db, payload=payload)
 
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
@@ -646,10 +319,12 @@ def get_metadata(db: Session = Depends(get_db)):
 
             if latest:
                 result.append(schemas.FileVersionOut(
+                    id=f.id,
                     file_path=f.file_path,
                     hash=latest.hash,
                     version_num=latest.version_num,
-                    size_bytes=latest.size_bytes
+                    size_bytes=latest.size_bytes,
+                    storage_path=latest.storage_path
                 ))
 
         return result
@@ -657,6 +332,25 @@ def get_metadata(db: Session = Depends(get_db)):
     except Exception:
         db.rollback()
         raise
+
+
+# ─── Week 8: File Delete Endpoint ──────────────────────────────────────────
+
+@router.delete("/file/{file_id}", status_code=status.HTTP_200_OK)
+def delete_file(file_id: int, db: Session = Depends(get_db)):
+    """Soft delete a file."""
+    user_id = DEFAULT_USER_ID
+    file_record = db.query(models.File).filter(
+        models.File.id == file_id,
+        models.File.user_id == user_id
+    ).first()
+    
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    file_record.is_deleted = True
+    db.commit()
+    return {"status": "deleted"}
 
 
 # ─── Week 6: Metadata Diff Endpoint ─────────────────────────────────────────

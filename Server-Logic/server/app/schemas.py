@@ -79,10 +79,12 @@ class MetadataResponse(BaseModel):
 
 class FileVersionOut(BaseModel):
     """Used by GET /sync/metadata to tell a client what files exist on the server."""
+    id: int | None = None
     file_path: str
     hash: str
     version_num: int
     size_bytes: int
+    storage_path: str | None = None
 
     class Config:
         from_attributes = True
