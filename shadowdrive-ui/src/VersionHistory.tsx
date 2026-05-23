@@ -22,7 +22,7 @@ function formatBytes(bytes: number, decimals = 2) {
 
 export default function VersionHistory() {
   const navigate = useNavigate();
-  const [versions, setVersions] = useState<VersionRecord[]>([]);
+  const [versions, _] = useState<VersionRecord[]>([]);
 
   if (versions.length === 0) {
     return (
