@@ -111,3 +111,29 @@ class ChunkUpload(Base):
     __table_args__ = (
         UniqueConstraint('version_id', 'chunk_index', name='unique_chunk_per_version'),
     )
+
+
+class StoredChunk(Base):
+    """Tracks unique chunks stored globally in MinIO (Week 1 / Phase 1 Enhancement).
+
+    Chunks are stored in MinIO using the chunk's SHA256 hash as the key.
+    Any file version that contains this chunk can refer to it.
+    """
+    __tablename__ = "stored_chunks"
+    chunk_hash = Column(String(64), primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    storage_path = Column(String(500), nullable=False)  # e.g. chunks/{chunk_hash}
+    size_bytes = Column(BigInteger, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class VersionChunk(Base):
+    """Maps version files to their constituent chunks in order (Week 1 / Phase 1 Enhancement)."""
+    __tablename__ = "version_chunks"
+    id = Column(BigInteger, primary_key=True, index=True)
+    version_id = Column(BigInteger, ForeignKey("versions.id"), nullable=False)
+    chunk_index = Column(Integer, nullable=False)       # 0-based index
+    chunk_hash = Column(String(64), ForeignKey("stored_chunks.chunk_hash"), nullable=False)
+    __table_args__ = (
+        UniqueConstraint('version_id', 'chunk_index', name='unique_chunk_index_per_version'),
+    )

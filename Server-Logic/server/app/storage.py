@@ -157,9 +157,10 @@ def assemble_chunks(chunk_keys: list[str], final_key: str) -> int:
         ContentLength=total_bytes,
     )
 
-    # Clean up individual chunk objects
+    # Clean up individual chunk objects if they are not stored permanently
     for ck in chunk_keys:
-        s3.delete_object(Bucket=MINIO_BUCKET, Key=ck)
+        if not ck.startswith("chunks/"):
+            s3.delete_object(Bucket=MINIO_BUCKET, Key=ck)
 
     logger.info("Assembled %d chunks → %s (%d bytes)", len(chunk_keys), final_key, total_bytes)
     return total_bytes

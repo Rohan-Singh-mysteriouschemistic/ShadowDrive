@@ -53,6 +53,7 @@ class MetadataAnnounce(BaseModel):
     event: str
     base_version_id: int | None = None
     client_modified_at: datetime | None = None
+    chunk_hashes: list[str] | None = None
 
 
 class ConflictInfo(BaseModel):
@@ -75,6 +76,7 @@ class MetadataResponse(BaseModel):
     version_id: int | None = None
     upload_required: bool
     conflict_info: Optional[ConflictInfo] = None
+    missing_chunks: list[int] | None = None
 
 
 class FileVersionOut(BaseModel):
@@ -118,6 +120,7 @@ class DiffItem(BaseModel):
     version_id: int
     size_bytes: int
     storage_path: str    # MinIO key — client passes this back to /sync/download
+    chunk_hashes: list[str] | None = None
 
     class Config:
         from_attributes = True

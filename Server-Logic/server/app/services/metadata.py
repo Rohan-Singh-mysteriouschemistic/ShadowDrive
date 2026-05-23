@@ -36,6 +36,7 @@ EMPTY_FILE_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 def process_metadata_sync(
     db: Session,
     payload: schemas.MetadataAnnounce,
+    user_id: int = DEFAULT_USER_ID,
 ) -> schemas.MetadataResponse:
     """Core announce-metadata business logic.
 
@@ -62,8 +63,6 @@ def process_metadata_sync(
         Exception: Any unhandled DB or storage error is re-raised after a
                    rollback so that FastAPI's default 500 handler kicks in.
     """
-    user_id = DEFAULT_USER_ID
-
     # SQLite sends 0 for "no base"; PostgreSQL expects NULL.
     if payload.base_version_id == 0:
         payload.base_version_id = None
@@ -112,7 +111,7 @@ def _ensure_user(db: Session, user_id: int) -> None:
     """Auto-create a stub user for development if it doesn't exist yet."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
-        user = models.User(id=user_id, email="test@example.com", hashed_password="pwd")
+        user = models.User(id=user_id, username="test_user", email="test@example.com", password_hash="pwd")
         db.add(user)
         db.commit()
 
@@ -373,6 +372,10 @@ def _resolve_client_wins(
         announced_at=client_ts,
     )
     db.add(winner_version)
+    db.flush()
+
+    missing_chunks = reconcile_version_chunks(db, winner_version, payload.chunk_hashes, user_id)
+
     file_record.updated_at = func.now()
     db.commit()
     db.refresh(winner_version)
@@ -394,6 +397,7 @@ def _resolve_client_wins(
             winner_version_id=winner_version.id,
             resolution="lww",
         ),
+        missing_chunks=missing_chunks,
     )
 
 
@@ -425,6 +429,10 @@ def _resolve_server_wins(
         announced_at=client_ts,
     )
     db.add(conflict_version)
+    db.flush()
+
+    missing_chunks = reconcile_version_chunks(db, conflict_version, payload.chunk_hashes, user_id)
+
     file_record.updated_at = func.now()
     db.commit()
     db.refresh(conflict_version)
@@ -446,6 +454,7 @@ def _resolve_server_wins(
             winner_version_id=server_latest.id,
             resolution="lww",
         ),
+        missing_chunks=missing_chunks,
     )
 
 
@@ -478,6 +487,10 @@ def _accept_new_version(
         announced_at=payload.client_modified_at,
     )
     db.add(new_version)
+    db.flush()
+
+    missing_chunks = reconcile_version_chunks(db, new_version, payload.chunk_hashes, user_id)
+
     file_record.updated_at = func.now()
     db.commit()
     db.refresh(new_version)
@@ -487,7 +500,61 @@ def _accept_new_version(
         file_id=file_record.id,
         version_id=new_version.id,
         upload_required=True,
+        missing_chunks=missing_chunks,
     )
+
+
+def reconcile_version_chunks(db: Session, version_record: models.Version, chunk_hashes: list[str] | None, user_id: int) -> list[int]:
+    """
+    Reconcile the announced chunk hashes for a new version.
+    1. Check which chunk hashes exist in `stored_chunks`.
+    2. For those that exist:
+       - Reuse them: insert into `version_chunks`
+       - Insert into `chunk_uploads` so the assembly queue knows they are already there!
+    3. For those that do NOT exist:
+       - Add their index to `missing_chunks`.
+    4. Return the list of missing chunk indices.
+    """
+    if not chunk_hashes:
+        return []
+
+    missing_chunks = []
+    for idx, ch in enumerate(chunk_hashes):
+        # Query if this chunk is already stored
+        stored = db.query(models.StoredChunk).filter(models.StoredChunk.chunk_hash == ch).first()
+        if stored:
+            # Insert into version_chunks
+            vc = models.VersionChunk(
+                version_id=version_record.id,
+                chunk_index=idx,
+                chunk_hash=ch
+            )
+            db.add(vc)
+
+            # Also insert into chunk_uploads (as a completed chunk)
+            # So that the existing assembly logic is fully satisfied!
+            cu = models.ChunkUpload(
+                version_id=version_record.id,
+                chunk_index=idx,
+                total_chunks=len(chunk_hashes),
+                chunk_storage_key=stored.storage_path,
+                size_bytes=stored.size_bytes
+            )
+            db.add(cu)
+        else:
+            missing_chunks.append(idx)
+
+    db.flush()
+
+    # If all chunks are reused (none missing), trigger background assembly immediately!
+    if len(missing_chunks) == 0 and len(chunk_hashes) > 0:
+        from ..worker import enqueue_assemble_and_verify
+        version_record.upload_status = models.UploadStatus.processing
+        job_id = enqueue_assemble_and_verify(version_record.id, version_record.hash)
+        version_record.job_id = job_id
+        db.flush()
+
+    return missing_chunks
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -505,3 +572,4 @@ def make_conflict_path(original_path: str) -> str:
 
 # Private alias used internally — keeps the call-sites inside this module tidy.
 _make_conflict_path = make_conflict_path
+

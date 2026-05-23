@@ -29,3 +29,8 @@ RETRY_MAX_BACKOFF_SECONDS = 60
 
 # ─── Hashing ─────────────────────────────────────────────────────────────────
 HASH_ALGORITHM = "sha256"
+
+# ─── Auth State ──────────────────────────────────────────────────────────────
+sync_suspended = False
+encryption_key = None
+
