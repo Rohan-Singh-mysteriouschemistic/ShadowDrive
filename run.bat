@@ -20,7 +20,7 @@ timeout /t 5 /nobreak
 echo.
 echo [3/4] Starting RQ Background Worker...
 :: Using start to open a new command prompt window for the RQ worker
-start "ShadowDrive RQ Worker" cmd /k "rq worker shadowdrive-jobs --with-scheduler"
+start "ShadowDrive RQ Worker" cmd /k "rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker"
 
 echo.
 echo [4/5] Starting Client Watcher Agent...
