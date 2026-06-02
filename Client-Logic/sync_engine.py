@@ -54,7 +54,7 @@ def get_or_create_nonces(file_path: str, plaintext_hash: str, total_chunks: int)
     `pending_chunk_uploads` table along with the plaintext_hash.
     """
     import os
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
     cur = conn.cursor()
     
     # Clean up obsolete nonces for this path
@@ -131,7 +131,7 @@ def finalize_local_db_after_upload(full_path: str, plaintext_hash: str, version_
     Once an upload succeeds and the server registers the version, finalize
     local shadow.db tracking tables: version_id, encrypted_hash, and chunk_signatures.
     """
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
     cur = conn.cursor()
     
     if config.encryption_key:
@@ -317,7 +317,7 @@ def _handle_failed_job(job: UploadJob, error_data: dict):
 def _mark_synced_db(event_id: int):
     """Flags internal staging entries completed inside tracking table."""
     try:
-        conn = sqlite3.connect(config.DB_PATH)
+        conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
         cur = conn.cursor()
         cur.execute("UPDATE events SET is_synced = 1 WHERE id = ?", (event_id,))
         conn.commit()
@@ -331,7 +331,7 @@ def _get_device_id() -> int:
     """Gets device_id from settings table, generating a unique random one if absent."""
     import random
     try:
-        conn = sqlite3.connect(config.DB_PATH)
+        conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         cur.execute("SELECT value FROM settings WHERE key = 'device_id'")
@@ -361,7 +361,7 @@ def process_downstream_downloads(device_id: int):
     if not success:
         return
 
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
     cur = conn.cursor()
 
     _local_mutator.active = True  # Mute local event logging from handling this disk action
@@ -607,7 +607,7 @@ def start_sync_loop():
                 process_downstream_downloads(device_id)
 
                 # Process Local Outbound Changes Second (Week 5 Staging events)
-                conn = sqlite3.connect(config.DB_PATH)
+                conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 

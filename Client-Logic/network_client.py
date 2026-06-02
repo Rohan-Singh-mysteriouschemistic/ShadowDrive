@@ -22,7 +22,7 @@ def _get_setting(key: str) -> str | None:
     if not os.path.exists(config.DB_PATH):
         return None
     try:
-        conn = sqlite3.connect(config.DB_PATH)
+        conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -38,7 +38,7 @@ def _get_setting(key: str) -> str | None:
 def _save_setting(key: str, value: str):
     """Saves a key/value pair to the settings table in SQLite shadow.db."""
     try:
-        conn = sqlite3.connect(config.DB_PATH)
+        conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
