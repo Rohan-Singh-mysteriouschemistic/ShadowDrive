@@ -1,3 +1,7 @@
-# ShadowDrive++ Client Dependencies (Week 5)
+# ShadowDrive++ Client Dependencies (Week 5/6)
 requests>=2.31.0
 watchdog>=3.0.0
+cryptography>=41.0.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0

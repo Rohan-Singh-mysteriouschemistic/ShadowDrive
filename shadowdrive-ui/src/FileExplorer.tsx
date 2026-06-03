@@ -31,6 +31,8 @@ export default function FileExplorer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fileToDelete, setFileToDelete] = useState<{id: string | number, name: string} | null>(null);
+  const [editingFile, setEditingFile] = useState<{id: string | number, name: string, storage_path?: string, content: string} | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,6 +102,30 @@ export default function FileExplorer() {
     } catch (err) {
       console.error('Delete failed', err);
       alert('Delete failed');
+    }
+  };
+
+  const isTextFile = (filename: string) => {
+    const ext = filename.split('.').pop()?.toLowerCase();
+    return ['txt', 'md', 'json', 'js', 'ts', 'jsx', 'tsx', 'csv', 'html', 'css'].includes(ext || '');
+  };
+
+  const handleRowClick = async (e: React.MouseEvent, file: FileRecord) => {
+    if (isTextFile(file.file_path)) {
+      try {
+        const res = await fetch(`http://127.0.0.1:8001/api/download?file_path=${encodeURIComponent(file.file_path)}`);
+        if (res.ok) {
+          const text = await res.text();
+          setEditingFile({ id: file.id, name: file.file_path, storage_path: file.storage_path, content: text });
+        } else {
+          // If local fetch fails, fallback to standard encrypted download from central server
+          handleDownload(e, file.storage_path);
+        }
+      } catch (err) {
+        handleDownload(e, file.storage_path);
+      }
+    } else {
+      handleDownload(e, file.storage_path);
     }
   };
 
@@ -217,7 +243,7 @@ export default function FileExplorer() {
               </div>
             )}
             {files.map(file => (
-              <div key={file.id} className="file-row group grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/5 items-center hover:bg-white/5 transition-colors relative cursor-pointer" onClick={(e) => handleDownload(e, file.storage_path)}>
+              <div key={file.id} className="file-row group grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/5 items-center hover:bg-white/5 transition-colors relative cursor-pointer" onClick={(e) => handleRowClick(e, file)}>
                 <div className="col-span-5 flex items-center space-x-3 font-code-sm text-code-sm text-on-surface">
                   <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors">{getFileIcon(file.file_path)}</span>
                   <span className="truncate">{file.file_path}</span>
@@ -232,7 +258,7 @@ export default function FileExplorer() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/vault/history?file=${file.id}`);
+                        navigate(`/vault/history?file=${file.id}&name=${encodeURIComponent(file.file_path)}`);
                       }}
                       className="text-on-surface-variant hover:text-primary transition-colors cursor-pointer" 
                       title="View History"
@@ -281,6 +307,70 @@ export default function FileExplorer() {
                 className="px-4 py-2 bg-error text-on-error rounded font-label-md hover:bg-red-600 transition-colors shadow-[0_0_10px_rgba(239,68,68,0.3)] cursor-pointer"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Text Editor Modal */}
+      {editingFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-container-lowest border border-white/10 rounded-2xl p-6 w-full max-w-4xl shadow-2xl flex flex-col h-[80vh]">
+            <h3 className="font-headline-sm text-headline-sm text-on-surface font-bold mb-4 flex items-center justify-between">
+              <span>{editingFile.name}</span>
+              <button onClick={() => setEditingFile(null)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </h3>
+            
+            <textarea
+              className="flex-1 w-full bg-surface-container-low text-on-surface border border-white/10 rounded-lg p-4 font-mono text-sm resize-none focus:outline-none focus:border-primary/50 transition-colors"
+              value={editingFile.content}
+              onChange={(e) => setEditingFile({ ...editingFile, content: e.target.value })}
+              disabled={isSaving}
+            />
+
+            <div className="flex justify-end space-x-4 mt-6">
+              <button 
+                className="px-6 py-2 rounded font-label-md text-label-md text-on-surface hover:bg-white/5 transition-colors cursor-pointer"
+                onClick={() => setEditingFile(null)}
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+              <button 
+                className="bg-primary text-surface-container-lowest font-label-md text-label-md py-2 px-6 rounded font-bold hover:bg-primary-container transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer disabled:opacity-50"
+                onClick={async () => {
+                  setIsSaving(true);
+                  try {
+                    const blob = new Blob([editingFile.content], { type: 'text/plain' });
+                    const fileObj = new File([blob], editingFile.name, { type: 'text/plain' });
+                    await uploadFile(fileObj, editingFile.name);
+                    
+                    // Refresh files
+                    const data = await apiFetch('/sync/metadata');
+                    const mappedFiles = data.map((f: any, idx: number) => ({
+                      id: f.id || f.hash || idx,
+                      file_path: f.file_path,
+                      size_bytes: f.size_bytes,
+                      updated_at: new Date().toLocaleString(),
+                      upload_status: 'complete',
+                      is_conflict_copy: f.file_path.includes('(Conflicted copy)'),
+                      storage_path: f.storage_path,
+                    }));
+                    setFiles(mappedFiles);
+                    setEditingFile(null);
+                  } catch (err) {
+                    console.error("Failed to save file", err);
+                    alert("Failed to save changes.");
+                  } finally {
+                    setIsSaving(false);
+                  }
+                }}
+                disabled={isSaving}
+              >
+                {isSaving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>

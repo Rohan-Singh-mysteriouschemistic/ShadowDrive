@@ -20,3 +20,14 @@ def login(user_credentials: schemas.UserLogin, db: Session = Depends(database.ge
     # Generate a signed JWT token
     access_token = utils.create_access_token(data={"user_id": user.id})
     return {"access_token": access_token, "token_type": "bearer"}
+
+from ..dependencies import get_current_user
+
+@router.get('/me')
+def get_me(current_user: models.User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "storage_quota": current_user.storage_quota
+    }

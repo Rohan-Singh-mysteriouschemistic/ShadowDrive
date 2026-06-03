@@ -6,6 +6,7 @@ from fastapi import status, HTTPException, Depends, APIRouter, UploadFile, File,
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
+from sqlalchemy import text
 from typing import List
 from .. import models, schemas
 from ..database import get_db
@@ -118,6 +119,25 @@ def upload_file(
         # ── Step 3: Read all bytes and upload to MinIO ───────────────────
         file_bytes = file.file.read()
         total_bytes = len(file_bytes)
+
+        # ── Step 3.5: Enforce Storage Quota ──────────────────────────────
+        sql = """
+            SELECT COALESCE(SUM(v.size_bytes), 0)
+            FROM (
+                SELECT file_id, MAX(version_num) as max_v
+                FROM versions
+                GROUP BY file_id
+            ) latest
+            JOIN versions v ON v.file_id = latest.file_id AND v.version_num = latest.max_v
+            JOIN files f ON f.id = v.file_id
+            WHERE f.user_id = :user_id AND f.is_deleted = FALSE
+        """
+        current_usage = db.execute(text(sql), {"user_id": current_user.id}).scalar() or 0
+        if current_usage + total_bytes > current_user.storage_quota:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Storage quota exceeded. Used: {current_usage}, Quota: {current_user.storage_quota}"
+            )
 
         storage_key = version_record.storage_path
         storage.put_object(storage_key, file_bytes)
@@ -233,6 +253,25 @@ def upload_chunk(
         # ── Step 2: Store chunk bytes in MinIO ───────────────────────────
         chunk_bytes = chunk.file.read()
         chunk_size = len(chunk_bytes)
+
+        # ── Step 2.5: Enforce Storage Quota ──────────────────────────────
+        sql = """
+            SELECT COALESCE(SUM(v.size_bytes), 0)
+            FROM (
+                SELECT file_id, MAX(version_num) as max_v
+                FROM versions
+                GROUP BY file_id
+            ) latest
+            JOIN versions v ON v.file_id = latest.file_id AND v.version_num = latest.max_v
+            JOIN files f ON f.id = v.file_id
+            WHERE f.user_id = :user_id AND f.is_deleted = FALSE
+        """
+        current_usage = db.execute(text(sql), {"user_id": current_user.id}).scalar() or 0
+        if current_usage + chunk_size > current_user.storage_quota:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Storage quota exceeded. Used: {current_usage}, Quota: {current_user.storage_quota}"
+            )
 
         # Hash chunk to make it content-addressable
         chunk_hash = hashlib.sha256(chunk_bytes).hexdigest()
@@ -404,6 +443,38 @@ def delete_file(
     db.commit()
     return {"status": "deleted"}
 
+from typing import Optional
+
+@router.get("/versions/recent")
+def get_recent_versions(
+    file_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Returns the version history for a specific file or globally.
+    """
+    query = db.query(models.Version).join(models.File).filter(
+        models.File.user_id == current_user.id
+    )
+    
+    if file_id:
+        query = query.filter(models.File.id == file_id)
+        
+    versions = query.order_by(models.Version.created_at.desc()).limit(50).all()
+    
+    return [
+        {
+            "id": str(v.id),
+            "version_number": v.version_num,
+            "hash": v.hash,
+            "created_at": str(v.created_at),
+            "device_id": "Unknown",
+            "size_bytes": v.size_bytes,
+            "storage_path": v.storage_path,
+            "file_name": v.file.file_path
+        } for v in versions
+    ]
 
 # ─── Week 6: Metadata Diff Endpoint ─────────────────────────────────────────
 

@@ -57,6 +57,17 @@ def _save_token(token: str):
     """Saves jwt_token to settings."""
     _save_setting("jwt_token", token)
 
+def _clear_device():
+    """Clears the old device_id on login to prevent 403 Forbidden cross-user conflicts."""
+    try:
+        conn = sqlite3.connect(config.DB_PATH)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM settings WHERE key = 'device_id'")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        pass
+
 
 def _request(method: str, endpoint: str, **kwargs) -> requests.Response:
     """Wrapper around requests.Session.request to inject auth headers and handle 401."""
@@ -147,6 +158,24 @@ def health_check() -> bool:
         logger.warning("Health check failed: %s", e)
         return False
 
+
+def send_heartbeat(device_id: int) -> tuple[bool, list]:
+    """POST /devices/{device_id}/heartbeat — Send ping and get pending commands."""
+    try:
+        resp = _request("POST", f"/devices/{device_id}/heartbeat", timeout=10)
+        resp.raise_for_status()
+        return True, resp.json()
+    except requests.RequestException as e:
+        logger.debug("Heartbeat failed: %s", e)
+        return False, []
+
+def ack_command(device_id: int, command_id: int) -> bool:
+    """POST /devices/{device_id}/command/{command_id}/ack"""
+    try:
+        resp = _request("POST", f"/devices/{device_id}/command/{command_id}/ack", timeout=10)
+        return resp.status_code == 200
+    except requests.RequestException:
+        return False
 
 def announce_metadata(relative_path: str, file_hash: str, event_type: str,
                       base_version_id: int = None, client_modified_at: str = None,
@@ -245,6 +274,10 @@ def get_metadata_diff(device_id: int) -> tuple[bool, dict]:
     try:
         params = {"device_id": device_id}
         resp = _request("GET", "/sync/metadata/diff", params=params, timeout=30)
+        if resp.status_code == 403:
+            logger.warning("Device ID is forbidden (likely registered to another user). Wiping local device_id.")
+            _clear_device()
+            return False, {}
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:

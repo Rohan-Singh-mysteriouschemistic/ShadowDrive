@@ -30,10 +30,21 @@ class DeviceOut(BaseModel):
     id: int
     device_name: str
     is_online: bool
-    last_seen_at: datetime | None = None
-    
+    last_seen_at: datetime | None
+
     class Config:
         from_attributes = True
+
+class DeviceCommandOut(BaseModel):
+    id: int
+    command: str
+    status: str
+
+    class Config:
+        from_attributes = True
+
+class DeviceUpdate(BaseModel):
+    device_name: str
 
 
 # ─── Sync Schemas (matching Rohan's client payloads) ─────────────────────────
