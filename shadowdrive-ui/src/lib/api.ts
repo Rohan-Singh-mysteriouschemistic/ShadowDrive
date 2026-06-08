@@ -36,31 +36,13 @@ async function calculateSHA256(file: File): Promise<string> {
 }
 
 export async function uploadFile(file: File, remotePath: string) {
-  const hash = await calculateSHA256(file);
-  
-  // 1. Announce metadata
-  await apiFetch('/sync/announce', {
-    method: 'POST',
-    body: JSON.stringify({
-      path: remotePath,
-      hash: hash,
-      event: 'new',
-      client_modified_at: new Date().toISOString()
-    })
-  });
-  
-  // 2. Upload file binary
   const formData = new FormData();
+  // Pass the file so the local API can drop it in the watch_folder
   formData.append('file', file, remotePath);
-  
-  const token = getToken();
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  
-  const response = await fetch(`${BASE_URL}/sync/upload`, {
+
+  const response = await fetch(`http://127.0.0.1:8001/api/upload`, {
     method: 'POST',
     body: formData,
-    headers
   });
   
   if (!response.ok) throw response;

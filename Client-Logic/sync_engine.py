@@ -34,6 +34,10 @@ upload_queue: queue.Queue = queue.Queue()
 _in_flight_events = set()
 _in_flight_lock = threading.Lock()
 
+# Thread-local storage for preventing watcher feedback loops
+_local_mutator = threading.local()
+_local_mutator.active = False
+
 def _mark_in_flight(event_id: int) -> bool:
     with _in_flight_lock:
         if event_id in _in_flight_events:
@@ -603,6 +607,32 @@ def start_sync_loop():
 
             if network_client.health_check():
                 device_id = _get_device_id()
+                
+                # Process Heartbeat and Commands Phase
+                hb_success, pending_commands = network_client.send_heartbeat(device_id)
+                if hb_success and pending_commands:
+                    for cmd in pending_commands:
+                        command_name = cmd.get("command")
+                        cmd_id = cmd.get("id")
+                        print(f"[SYNC ENGINE] Received remote command: {command_name}")
+                        
+                        if command_name == "WAKE":
+                            print("🌟 WAKE SIGNAL RECEIVED FROM SERVER 🌟")
+                            network_client.ack_command(device_id, cmd_id)
+                        elif command_name == "REVOKE":
+                            print("🚨 DEVICE ACCESS REVOKED BY SERVER 🚨 Wiping local data...")
+                            # Wipe SQLite token and exit
+                            conn = sqlite3.connect(config.DB_PATH)
+                            cur = conn.cursor()
+                            cur.execute("DELETE FROM settings WHERE key IN ('access_token', 'device_id', 'encryption_key')")
+                            conn.commit()
+                            conn.close()
+                            network_client.ack_command(device_id, cmd_id)
+                            import sys
+                            sys.exit(0)
+                        else:
+                            network_client.ack_command(device_id, cmd_id)
+
                 # Process Downstream Phase First (Week 6 Download Step)
                 process_downstream_downloads(device_id)
 

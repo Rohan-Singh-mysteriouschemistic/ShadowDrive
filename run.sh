@@ -40,17 +40,17 @@ else
 fi
 
 echo ""
-echo "[4/4] Starting Client Watcher Agent..."
+echo "[4/4] Starting Local Client API Agent..."
 cd "../../Client-Logic" || exit
 if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
-    start cmd //k "python watcher.py"
+    start cmd //k "python local_api.py"
 elif command -v gnome-terminal &> /dev/null; then
-    gnome-terminal -- bash -c "python watcher.py; exec bash" &
+    gnome-terminal -- bash -c "python local_api.py; exec bash" &
 elif command -v xterm &> /dev/null; then
-    xterm -e "python watcher.py" &
+    xterm -e "python local_api.py" &
 else
     # Fallback to running in the background and logging
-    python watcher.py > client.log 2>&1 &
+    python local_api.py > client.log 2>&1 &
     echo "Client started in background (see client.log)"
 fi
 

@@ -9,6 +9,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
+    storage_quota = Column(BigInteger, nullable=False, default=5368709120) # 5GB
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Device(Base):
@@ -19,6 +20,14 @@ class Device(Base):
     is_online = Column(Boolean, default=False)
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     __table_args__ = (UniqueConstraint('user_id', 'device_name', name='unique_device_per_user'),)
+
+class DeviceCommand(Base):
+    __tablename__ = "device_commands"
+    id = Column(BigInteger, primary_key=True, index=True)
+    device_id = Column(BigInteger, ForeignKey("devices.id"), nullable=False)
+    command = Column(String(50), nullable=False) # e.g. WAKE, REVOKE
+    status = Column(String(20), default='pending') # pending, completed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class File(Base):
     __tablename__ = "files"
@@ -127,6 +136,7 @@ class StoredChunk(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+
 class VersionChunk(Base):
     """Maps version files to their constituent chunks in order (Week 1 / Phase 1 Enhancement)."""
     __tablename__ = "version_chunks"
@@ -136,4 +146,4 @@ class VersionChunk(Base):
     chunk_hash = Column(String(64), ForeignKey("stored_chunks.chunk_hash"), nullable=False)
     __table_args__ = (
         UniqueConstraint('version_id', 'chunk_index', name='unique_chunk_index_per_version'),
-    )
+    )

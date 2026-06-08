@@ -22,6 +22,7 @@ Thumbs.db
 
 # Ignore personal study documentation
 docs/
+.code-review-graph/
 
 # Ignore temporary AI implementation logs
 BMAD/implementation-artifacts/

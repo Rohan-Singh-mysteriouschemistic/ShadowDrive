@@ -1,5 +1,5 @@
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from .database import get_db
@@ -9,7 +9,7 @@ from . import models, utils
 # auto_error=False allows us to raise custom 401 exceptions.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="users/login", auto_error=False)
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> models.User:
+def get_current_user(request: Request, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> models.User:
     """
     Extract Bearer token, decode it, verify its signature and expiration,
     and fetch the current authenticated user from the database.
@@ -19,6 +19,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    if not token:
+        # Fallback to query parameter 'token' for direct browser downloads
+        token = request.query_params.get("token")
 
     if not token:
         raise HTTPException(
