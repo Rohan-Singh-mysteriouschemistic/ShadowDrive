@@ -23,10 +23,10 @@ echo [3/4] Starting RQ Background Worker...
 start "ShadowDrive RQ Worker" cmd /k "rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker"
 
 echo.
-echo [4/5] Starting Client Watcher Agent...
+echo [4/5] Starting Local Client API Agent...
 cd "..\..\Client-Logic"
-:: Using start to open another command prompt window for the client watcher
-start "ShadowDrive Client Watcher" cmd /k "python watcher.py"
+:: Using start to open another command prompt window for the local api
+start "ShadowDrive Local Client" cmd /k "python local_api.py"
 
 echo.
 echo [5/5] Starting UI Landing Page...

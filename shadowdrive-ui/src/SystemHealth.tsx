@@ -15,8 +15,8 @@ export default function SystemHealth() {
   const [error, setError] = useState<string | null>(null);
   
   // High-Level Metrics
-  const [totalNodes, setTotalNodes] = useState(4);
-  const [syncRate, setSyncRate] = useState(99.98);
+  const [totalNodes, setTotalNodes] = useState(0);
+  const [syncRate, setSyncRate] = useState(0);
 
   useEffect(() => {
     async function loadTelemetry() {

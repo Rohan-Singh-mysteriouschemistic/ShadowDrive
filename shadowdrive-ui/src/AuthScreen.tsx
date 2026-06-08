@@ -89,36 +89,34 @@ export default function AuthScreen() {
     const formData = new FormData(e.currentTarget);
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
+    const passphrase = formData.get('passphrase') as string;
+    const username = !isLogin ? email.split('@')[0] : "";
 
     try {
-      if (!isLogin) {
-        // Register User first
-        const username = email.split('@')[0];
-        const regRes = await fetch('http://127.0.0.1:8000/users/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, username }),
-        });
-        if (!regRes.ok) {
-          const errData = await regRes.json();
-          throw new Error(errData.detail || 'Registration failed');
-        }
-      }
+      const endpoint = isLogin ? 'http://127.0.0.1:8001/api/auth/login' : 'http://127.0.0.1:8001/api/auth/register';
+      const body = isLogin 
+        ? { email, password, passphrase }
+        : { email, password, username, passphrase };
 
-      // Login to get token
-      const response = await fetch('http://127.0.0.1:8000/auth/login', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        throw new Error(response.status === 401 ? 'Unauthorized: Invalid email or password' : 'Login failed');
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Authentication failed. Make sure the local Client Agent is running.');
       }
 
       const data = await response.json();
-      if (data.access_token || data.token) {
-        localStorage.setItem('shadowdrive_token', data.access_token || data.token);
+      
+      // The local API handles getting and saving the token in the backend DB!
+      // But we also need the token in the UI so we can fetch files directly.
+      if (data.access_token) {
+        localStorage.setItem('shadowdrive_token', data.access_token);
+      } else {
+        localStorage.setItem('shadowdrive_token', "local_client_authenticated");
       }
       
       if (location.search.includes('mode=deploy')) {
@@ -257,6 +255,18 @@ export default function AuthScreen() {
                   placeholder="••••••••••••"
                   icon="key"
                   delay={0.3}
+                  toggleVisibility={() => setShowPassword(!showPassword)}
+                  showPassword={showPassword}
+                />
+
+                <InputField
+                  id="passphrase"
+                  name="passphrase"
+                  label="ENCRYPTION PASSPHRASE"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••••••"
+                  icon="enhanced_encryption"
+                  delay={0.35}
                   toggleVisibility={() => setShowPassword(!showPassword)}
                   showPassword={showPassword}
                 />

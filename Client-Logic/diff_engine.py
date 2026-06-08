@@ -30,6 +30,11 @@ def ensure_db():
     except sqlite3.OperationalError:
         pass
 
+    try:
+        cur.execute("ALTER TABLE files ADD COLUMN encrypted_hash TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +50,43 @@ def ensure_db():
     except sqlite3.OperationalError:
         pass
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS chunk_signatures (
+            file_path   TEXT,
+            chunk_index INTEGER,
+            hash        TEXT NOT NULL,
+            PRIMARY KEY (file_path, chunk_index)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_chunk_signatures_hash ON chunk_signatures (hash)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_chunk_uploads (
+            file_path      TEXT,
+            chunk_index    INTEGER,
+            nonce          BLOB NOT NULL,
+            plaintext_hash TEXT,
+            PRIMARY KEY (file_path, chunk_index)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS local_chunk_nonces (
+            file_path      TEXT,
+            chunk_index    INTEGER,
+            nonce          BLOB NOT NULL,
+            plaintext_hash TEXT,
+            PRIMARY KEY (file_path, chunk_index)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -59,6 +101,18 @@ def _log_event(cur, event_type, file_path, file_hash=None, version_id=0):
 def _delete_file(cur, path):
     """Clears tracking maps out of local shadow DB indices."""
     cur.execute("DELETE FROM files WHERE file_path = ?", (path,))
+    cur.execute("DELETE FROM chunk_signatures WHERE file_path = ?", (path,))
+
+def update_chunk_signatures(cur, file_path):
+    """Generates and updates chunk hashes in the chunk_signatures table."""
+    from hash_utils import chunk_and_hash_file
+    cur.execute("DELETE FROM chunk_signatures WHERE file_path = ?", (file_path,))
+    chunk_hashes = chunk_and_hash_file(file_path)
+    for idx, h in enumerate(chunk_hashes):
+        cur.execute("""
+            INSERT INTO chunk_signatures (file_path, chunk_index, hash)
+            VALUES (?, ?, ?)
+        """, (file_path, idx, h))
 
 def process_single_file(path, event_type):
     """Processes discrete event mutations targeted by OS folder hooks."""
@@ -109,6 +163,8 @@ def process_single_file(path, event_type):
                 VALUES (?, ?, ?, ?, ?)
             """, (path, file_hash, stat.st_size, stat.st_mtime, version_id))
             
+            update_chunk_signatures(cur, path)
+            
         except OSError:
             conn.close()
             return
@@ -151,11 +207,13 @@ def run_full_scan():
                     _log_event(cur, "new", full_path, h, 0)
                     cur.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)", 
                                 (full_path, h, stat.st_size, stat.st_mtime, 0))
+                    update_chunk_signatures(cur, full_path)
                 elif db_records[full_path][0] != h:
                     print(f"[BOOTSTRAP FIND] Modified entry -> {file}")
                     _log_event(cur, "modified", full_path, h, db_records[full_path][1])
                     cur.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)", 
                                 (full_path, h, stat.st_size, stat.st_mtime, db_records[full_path][1]))
+                    update_chunk_signatures(cur, full_path)
             except OSError:
                 continue
 
@@ -164,6 +222,7 @@ def run_full_scan():
             print(f"[BOOTSTRAP FIND] Vanished entry -> {os.path.basename(tracked_path)}")
             _log_event(cur, "deleted", tracked_path, None, db_records[tracked_path][1])
             cur.execute("DELETE FROM files WHERE file_path = ?", (tracked_path,))
+            cur.execute("DELETE FROM chunk_signatures WHERE file_path = ?", (tracked_path,))
 
     conn.commit()
     conn.close()

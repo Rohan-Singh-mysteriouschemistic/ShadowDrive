@@ -1,7 +1,38 @@
 import bcrypt
+import jwt
+import os
+from datetime import datetime, timedelta, timezone
+from passlib.context import CryptContext
 
-def hash(password: str):
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+# CryptContext for passlib bcrypt hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def verify(plain_password: str, hashed_password: str):
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+# JWT configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "shadowdrive-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week expiration
+
+def hash(password: str) -> str:
+    """Hash a password using bcrypt via passlib."""
+    return pwd_context.hash(password)
+
+def verify(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plain password against the hashed password."""
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        # Fallback to direct bcrypt checkpw in case legacy hash format is stored
+        try:
+            return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+        except Exception:
+            return False
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    """Generate a signed JWT access token."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)

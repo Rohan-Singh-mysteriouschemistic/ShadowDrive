@@ -1,10 +1,12 @@
 import os
 import shutil
 import logging
+import hashlib
 from fastapi import status, HTTPException, Depends, APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
+from sqlalchemy import text
 from typing import List
 from .. import models, schemas
 from ..database import get_db
@@ -12,6 +14,7 @@ from .. import storage
 from ..models import UploadStatus
 from ..worker import enqueue_verify, enqueue_assemble_and_verify
 from ..services.metadata import process_metadata_sync
+from ..dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,7 @@ from ..services.metadata import DEFAULT_USER_ID, EMPTY_FILE_SHA256
 def announce_metadata(
     payload: schemas.MetadataAnnounce,
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ) -> schemas.MetadataResponse:
     """
     Receive a file-change announcement from a client device.
@@ -53,11 +57,15 @@ def announce_metadata(
 
     The JSON input/output contract is unchanged from previous versions.
     """
-    return process_metadata_sync(db=db, payload=payload)
+    return process_metadata_sync(db=db, payload=payload, user_id=current_user.id)
 
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
-def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """
     Rohan's network_client.py calls this with:
         files={"file": (remote_path, file_handle)}
@@ -75,7 +83,7 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
         - Wraps all DB mutations in try/except with rollback.
         - Atomic write semantics provided by MinIO's PUT (S3 PUTs are atomic).
     """
-    user_id = DEFAULT_USER_ID
+    user_id = current_user.id
     remote_path = file.filename
 
     if not remote_path:
@@ -111,6 +119,25 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
         # ── Step 3: Read all bytes and upload to MinIO ───────────────────
         file_bytes = file.file.read()
         total_bytes = len(file_bytes)
+
+        # ── Step 3.5: Enforce Storage Quota ──────────────────────────────
+        sql = """
+            SELECT COALESCE(SUM(v.size_bytes), 0)
+            FROM (
+                SELECT file_id, MAX(version_num) as max_v
+                FROM versions
+                GROUP BY file_id
+            ) latest
+            JOIN versions v ON v.file_id = latest.file_id AND v.version_num = latest.max_v
+            JOIN files f ON f.id = v.file_id
+            WHERE f.user_id = :user_id AND f.is_deleted = FALSE
+        """
+        current_usage = db.execute(text(sql), {"user_id": current_user.id}).scalar() or 0
+        if current_usage + total_bytes > current_user.storage_quota:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Storage quota exceeded. Used: {current_usage}, Quota: {current_user.storage_quota}"
+            )
 
         storage_key = version_record.storage_path
         storage.put_object(storage_key, file_bytes)
@@ -157,7 +184,8 @@ def upload_chunk(
     chunk_index: int = Form(...),
     total_chunks: int = Form(...),
     file_hash: str = Form(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
     """
     Chunked upload endpoint for large files (Week 5).
@@ -183,13 +211,31 @@ def upload_chunk(
         duplicate rows are created.  This preserves Week 4's idempotent
         recovery guarantees.
     """
-    user_id = DEFAULT_USER_ID
+    user_id = current_user.id
 
     try:
         # ── Step 1: Validate version exists ──────────────────────────────
         version_record = db.query(models.Version).filter(
             models.Version.id == version_id
         ).first()
+
+        if not version_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Version {version_id} not found. Call /sync/announce first."
+            )
+
+        # Verify version belongs to current_user
+        file_record = db.query(models.File).filter(
+            models.File.id == version_record.file_id,
+            models.File.user_id == current_user.id
+        ).first()
+
+        if not file_record:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to upload chunks for this file version."
+            )
 
         if not version_record:
             raise HTTPException(
@@ -208,18 +254,56 @@ def upload_chunk(
         chunk_bytes = chunk.file.read()
         chunk_size = len(chunk_bytes)
 
-        # Key format: {user_id}/{file_path}/v{version}/chunks/{index}
-        file_record = db.query(models.File).filter(
-            models.File.id == version_record.file_id
-        ).first()
+        # ── Step 2.5: Enforce Storage Quota ──────────────────────────────
+        sql = """
+            SELECT COALESCE(SUM(v.size_bytes), 0)
+            FROM (
+                SELECT file_id, MAX(version_num) as max_v
+                FROM versions
+                GROUP BY file_id
+            ) latest
+            JOIN versions v ON v.file_id = latest.file_id AND v.version_num = latest.max_v
+            JOIN files f ON f.id = v.file_id
+            WHERE f.user_id = :user_id AND f.is_deleted = FALSE
+        """
+        current_usage = db.execute(text(sql), {"user_id": current_user.id}).scalar() or 0
+        if current_usage + chunk_size > current_user.storage_quota:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Storage quota exceeded. Used: {current_usage}, Quota: {current_user.storage_quota}"
+            )
 
-        chunk_key = (
-            f"{user_id}/{file_record.file_path}"
-            f"/v{version_record.version_num}"
-            f"/chunks/{chunk_index}"
-        )
+        # Hash chunk to make it content-addressable
+        chunk_hash = hashlib.sha256(chunk_bytes).hexdigest()
+        chunk_key = f"chunks/{chunk_hash}"
 
+        # Put chunk in MinIO (safe overwrite / upload)
         storage.put_object(chunk_key, chunk_bytes)
+
+        # Record chunk in StoredChunk table
+        stored_chunk = db.query(models.StoredChunk).filter(models.StoredChunk.chunk_hash == chunk_hash).first()
+        if not stored_chunk:
+            stored_chunk = models.StoredChunk(
+                chunk_hash=chunk_hash,
+                user_id=user_id,
+                storage_path=chunk_key,
+                size_bytes=chunk_size
+            )
+            db.add(stored_chunk)
+            db.flush()
+
+        # Record in VersionChunk table
+        version_chunk = db.query(models.VersionChunk).filter(
+            models.VersionChunk.version_id == version_id,
+            models.VersionChunk.chunk_index == chunk_index
+        ).first()
+        if not version_chunk:
+            version_chunk = models.VersionChunk(
+                version_id=version_id,
+                chunk_index=chunk_index,
+                chunk_hash=chunk_hash
+            )
+            db.add(version_chunk)
 
         # ── Step 3: Record chunk in DB (upsert for idempotency) ──────────
         existing_chunk = db.query(models.ChunkUpload).filter(
@@ -296,13 +380,16 @@ def upload_chunk(
 
 
 @router.get("/metadata", response_model=List[schemas.FileVersionOut])
-def get_metadata(db: Session = Depends(get_db)):
+def get_metadata(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """
-    Returns the latest version of every non-deleted file for the default user.
+    Returns the latest version of every non-deleted file for the user.
     Rohan's client will eventually call this to discover what files are on the
     server that it doesn't have locally.
     """
-    user_id = DEFAULT_USER_ID
+    user_id = current_user.id
 
     try:
         # Get all active (non-deleted) files for this user
@@ -337,9 +424,13 @@ def get_metadata(db: Session = Depends(get_db)):
 # ─── Week 8: File Delete Endpoint ──────────────────────────────────────────
 
 @router.delete("/file/{file_id}", status_code=status.HTTP_200_OK)
-def delete_file(file_id: int, db: Session = Depends(get_db)):
+def delete_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Soft delete a file."""
-    user_id = DEFAULT_USER_ID
+    user_id = current_user.id
     file_record = db.query(models.File).filter(
         models.File.id == file_id,
         models.File.user_id == user_id
@@ -352,6 +443,38 @@ def delete_file(file_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "deleted"}
 
+from typing import Optional
+
+@router.get("/versions/recent")
+def get_recent_versions(
+    file_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Returns the version history for a specific file or globally.
+    """
+    query = db.query(models.Version).join(models.File).filter(
+        models.File.user_id == current_user.id
+    )
+    
+    if file_id:
+        query = query.filter(models.File.id == file_id)
+        
+    versions = query.order_by(models.Version.created_at.desc()).limit(50).all()
+    
+    return [
+        {
+            "id": str(v.id),
+            "version_number": v.version_num,
+            "hash": v.hash,
+            "created_at": str(v.created_at),
+            "device_id": "Unknown",
+            "size_bytes": v.size_bytes,
+            "storage_path": v.storage_path,
+            "file_name": v.file.file_path
+        } for v in versions
+    ]
 
 # ─── Week 6: Metadata Diff Endpoint ─────────────────────────────────────────
 
@@ -360,7 +483,11 @@ def delete_file(file_id: int, db: Session = Depends(get_db)):
     status_code=status.HTTP_200_OK,
     response_model=schemas.DiffResponse
 )
-def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
+def get_metadata_diff(
+    device_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """
     GET /sync/metadata/diff?device_id=<id>
 
@@ -380,27 +507,25 @@ def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
            c. Otherwise the device is up-to-date → skip.
         5. Return the diff payload.
     """
-    user_id = DEFAULT_USER_ID
+    user_id = current_user.id
 
     try:
-        # ── Step 1: Validate device (and auto-create for Week 7 dev) ─────
+        # ── Step 1: Validate device ──────────────────────────────────────
         device = db.query(models.Device).filter(
             models.Device.id == device_id
         ).first()
 
         if not device:
-            # Auto-create dummy user if missing
-            user = db.query(models.User).filter(models.User.id == user_id).first()
-            if not user:
-                user = models.User(id=user_id, email="test@example.com", hashed_password="pwd")
-                db.add(user)
-                db.flush()
-            
-            # Auto-create dummy device
-            device = models.Device(id=device_id, user_id=user_id, device_name="Test-Device-1")
+            # Auto-create device for the authenticated user
+            device = models.Device(id=device_id, user_id=user_id, device_name=f"Device-{device_id}")
             db.add(device)
             db.commit()
-            logger.info("Auto-created dummy User 1 and Device 1 for sync operations.")
+            logger.info(f"Auto-created Device {device_id} for User {user_id}.")
+        elif device.user_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access sync diffs for this device."
+            )
 
         # ── Step 2: Build canonical server state ─────────────────────────
         # All non-deleted files for this user with a completed version
@@ -443,6 +568,11 @@ def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
                     deleted_files.append(file_rec.file_path)
 
         for file_id, (file_record, latest_version) in server_state.items():
+            version_chunks = db.query(models.VersionChunk).filter(
+                models.VersionChunk.version_id == latest_version.id
+            ).order_by(models.VersionChunk.chunk_index.asc()).all()
+            chunk_hashes = [vc.chunk_hash for vc in version_chunks]
+
             diff_item = schemas.DiffItem(
                 file_path=file_record.file_path,
                 file_id=file_record.id,
@@ -450,7 +580,8 @@ def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
                 version_num=latest_version.version_num,
                 version_id=latest_version.id,
                 size_bytes=latest_version.size_bytes,
-                storage_path=latest_version.storage_path
+                storage_path=latest_version.storage_path,
+                chunk_hashes=chunk_hashes
             )
 
             if file_id not in device_synced:
@@ -478,7 +609,11 @@ def get_metadata_diff(device_id: int, db: Session = Depends(get_db)):
 # ─── Week 6: File Download Endpoint ─────────────────────────────────────────
 
 @router.get("/download")
-def download_file(storage_path: str, db: Session = Depends(get_db)):
+def download_file(
+    storage_path: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """
     GET /sync/download?storage_path=<minio_key>
 
@@ -491,8 +626,9 @@ def download_file(storage_path: str, db: Session = Depends(get_db)):
     """
     try:
         # ── Validate the storage_path belongs to a real version ──────────
-        version = db.query(models.Version).filter(
-            models.Version.storage_path == storage_path
+        version = db.query(models.Version).join(models.File).filter(
+            models.Version.storage_path == storage_path,
+            models.File.user_id == current_user.id
         ).first()
 
         if not version:
@@ -525,6 +661,65 @@ def download_file(storage_path: str, db: Session = Depends(get_db)):
         )
 
 
+@router.get("/download_chunk")
+def download_chunk(
+    file_hash: str,
+    chunk_index: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    GET /sync/download_chunk?file_hash=<file_hash>&chunk_index=<index>&version_id=<version_id>
+
+    Streams a single chunk segment from MinIO back to the client.
+    """
+    try:
+        # Verify that the version belongs to current_user
+        vc = db.query(models.VersionChunk).join(models.Version).join(models.File).filter(
+            models.VersionChunk.version_id == version_id,
+            models.VersionChunk.chunk_index == chunk_index,
+            models.File.user_id == current_user.id
+        ).first()
+
+        if not vc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Chunk index {chunk_index} not found for version {version_id} or not owned by you."
+            )
+
+        stored = db.query(models.StoredChunk).filter(
+            models.StoredChunk.chunk_hash == vc.chunk_hash
+        ).first()
+
+        if not stored:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Stored chunk for hash {vc.chunk_hash} not found."
+            )
+
+        file_bytes = storage.get_object(stored.storage_path)
+
+        from fastapi.responses import Response
+        return Response(
+            content=file_bytes,
+            media_type="application/octet-stream",
+            headers={
+                "X-Chunk-Hash": vc.chunk_hash,
+                "X-Chunk-Index": str(chunk_index),
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("download_chunk failed for hash=%s index=%d version_id=%d: %s", file_hash, chunk_index, version_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download chunk: {e}"
+        )
+
+
 # ─── Week 6: Sync Acknowledgment Endpoint ───────────────────────────────────
 
 @router.post("/ack_sync", status_code=status.HTTP_200_OK)
@@ -532,7 +727,8 @@ def ack_sync(
     device_id: int = Form(...),
     file_id: int = Form(...),
     version_id: int = Form(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
     """
     POST /sync/ack_sync
@@ -546,6 +742,21 @@ def ack_sync(
     update its version_id and synced_at.  Otherwise insert a new row.
     """
     try:
+        # Verify ownership of device and file
+        device = db.query(models.Device).filter(
+            models.Device.id == device_id,
+            models.Device.user_id == current_user.id
+        ).first()
+        if not device:
+            raise HTTPException(status_code=403, detail="Device not found or not owned by you.")
+
+        file_record = db.query(models.File).filter(
+            models.File.id == file_id,
+            models.File.user_id == current_user.id
+        ).first()
+        if not file_record:
+            raise HTTPException(status_code=403, detail="File not found or not owned by you.")
+
         existing = db.query(models.FileDeviceMap).filter(
             models.FileDeviceMap.device_id == device_id,
             models.FileDeviceMap.file_id == file_id
@@ -579,7 +790,11 @@ def ack_sync(
 # ─── Week 8: Upload Status Polling Endpoint ─────────────────────────────────
 
 @router.get("/upload/status/{version_id}", status_code=status.HTTP_200_OK)
-def get_upload_status(version_id: int, db: Session = Depends(get_db)):
+def get_upload_status(
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """
     GET /sync/upload/status/{version_id}
 
@@ -594,8 +809,9 @@ def get_upload_status(version_id: int, db: Session = Depends(get_db)):
         job_id:        The RQ job ID (if a job was enqueued).
         size_bytes:    Final file size (populated once assembly/upload finishes).
     """
-    version = db.query(models.Version).filter(
-        models.Version.id == version_id
+    version = db.query(models.Version).join(models.File).filter(
+        models.Version.id == version_id,
+        models.File.user_id == current_user.id
     ).first()
 
     if not version:

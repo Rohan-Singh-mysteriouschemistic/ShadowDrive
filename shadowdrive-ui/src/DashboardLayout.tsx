@@ -21,12 +21,18 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     
     async function fetchStats() {
       try {
-        const data = await apiFetch('/sync/metadata');
-        const totalUsedBytes = data.reduce((acc: number, f: any) => acc + (f.size_bytes || 0), 0);
-        const conflicts = data.filter((f: any) => f.file_path && f.file_path.includes('(Conflicted copy)')).length;
+        const [metadata, authData] = await Promise.all([
+          apiFetch('/sync/metadata'),
+          apiFetch('/auth/me')
+        ]);
+        
+        const totalUsedBytes = metadata.reduce((acc: number, f: any) => acc + (f.size_bytes || 0), 0);
+        const conflicts = metadata.filter((f: any) => f.file_path && f.file_path.includes('(Conflicted copy)')).length;
         
         const usedGB = totalUsedBytes / (1024 * 1024 * 1024);
-        setStorage({ used: usedGB, total: 1000 });
+        const totalGB = authData.storage_quota ? (authData.storage_quota / (1024 * 1024 * 1024)) : 5;
+        
+        setStorage({ used: usedGB, total: totalGB });
         setConflictsCount(conflicts);
       } catch (e) {
         console.error('Failed to fetch dashboard stats', e);
