@@ -15,7 +15,7 @@ config.WATCH_DIR = getattr(config, 'WATCH_DIR', os.path.join(os.path.dirname(os.
 
 def ensure_db():
     """Initializes local state layout schemas inside shadow.db context."""
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
     cur  = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS files (
@@ -123,7 +123,7 @@ def process_single_file(path, event_type):
         return
 
     ensure_db()
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
     cur  = conn.cursor()
 
     if event_type == "deleted":
@@ -183,7 +183,7 @@ def run_full_scan():
     if not os.path.exists(config.WATCH_DIR):
         os.makedirs(config.WATCH_DIR)
 
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
     cur  = conn.cursor()
 
     cur.execute("SELECT file_path, hash, version_id FROM files")
