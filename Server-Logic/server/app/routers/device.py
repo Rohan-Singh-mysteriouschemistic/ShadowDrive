@@ -54,14 +54,18 @@ def device_heartbeat(
 ):
     """Client calls this every 30s. Updates online status and returns pending commands."""
     device = db.query(models.Device).filter(
-        models.Device.id == device_id,
-        models.Device.user_id == current_user.id
+        models.Device.id == device_id
     ).first()
     
     if not device:
         # Auto-create if it doesn't exist
         device = models.Device(id=device_id, user_id=current_user.id, device_name=f"Device-{device_id}")
         db.add(device)
+    elif device.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this device."
+        )
     
     device.is_online = True
     device.last_seen_at = func.now()
