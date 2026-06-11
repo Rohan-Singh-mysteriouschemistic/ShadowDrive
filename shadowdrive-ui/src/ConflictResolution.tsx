@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from './lib/api';
+import { useEventStream } from './lib/useEventStream';
 
 interface ConflictRecord {
   id: string;
@@ -6,6 +8,8 @@ interface ConflictRecord {
   path: string;
   timeDetected: string;
   status: 'Needs Resolution' | 'Resolved';
+  original_file_id: number;
+  conflict_file_id: number;
   optionA: {
     device: string;
     timestamp: string;
@@ -21,8 +25,68 @@ interface ConflictRecord {
 }
 
 export default function ConflictResolution() {
-  const [conflict] = useState<ConflictRecord | null>(null);
-  const [logs] = useState<{ id: number; time: string; msg: string; type: string }[]>([]);
+  const [conflicts, setConflicts] = useState<ConflictRecord[]>([]);
+  const [logs, setLogs] = useState<{ id: number; time: string; msg: string; type: string }[]>([]);
+  const fetchConflicts = useCallback(async () => {
+    try {
+      const data = await apiFetch('/sync/conflicts');
+      setConflicts(data);
+    } catch (error) {
+      console.error('Failed to fetch conflicts', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchConflicts();
+  }, [fetchConflicts]);
+
+  useEventStream(useCallback((event) => {
+    if (event.type === 'conflict_detected') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchConflicts();
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLogs(prev => [{
+        id: Date.now(),
+        time: new Date().toLocaleTimeString(),
+        msg: `Conflict detected on file: ${event.data.file_path}`,
+        type: 'warning'
+      }, ...prev]);
+    }
+  }, [fetchConflicts]));
+
+  const resolveConflict = async (resolution: 'keep_original' | 'keep_conflict' | 'keep_both') => {
+    if (!conflicts.length) return;
+    const currentConflict = conflicts[0];
+    
+    try {
+      await apiFetch('/sync/resolve_conflict', {
+        method: 'POST',
+        body: JSON.stringify({
+          original_file_id: currentConflict.original_file_id,
+          conflict_file_id: currentConflict.conflict_file_id,
+          resolution_choice: resolution
+        })
+      });
+      setLogs(prev => [{
+        id: Date.now(),
+        time: new Date().toLocaleTimeString(),
+        msg: `Conflict resolved successfully`,
+        type: 'success'
+      }, ...prev]);
+      fetchConflicts();
+    } catch (error) {
+      console.error('Failed to resolve conflict', error);
+      setLogs(prev => [{
+        id: Date.now(),
+        time: new Date().toLocaleTimeString(),
+        msg: `Error resolving conflict`,
+        type: 'error'
+      }, ...prev]);
+    }
+  };
+
+  const conflict = conflicts[0];
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden w-full relative bg-transparent">
@@ -107,7 +171,7 @@ export default function ConflictResolution() {
                     <div className="mt-4 flex gap-3">
                       <button 
                         className="flex-1 bg-primary text-surface-container-lowest font-label-md text-label-md py-2 rounded font-bold hover:bg-primary-container transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer"
-                        onClick={() => alert("Keeping Option A")}
+                        onClick={() => resolveConflict('keep_original')}
                       >
                         Keep A
                       </button>
@@ -152,7 +216,7 @@ export default function ConflictResolution() {
                     <div className="mt-4 flex gap-3">
                       <button 
                         className="flex-1 bg-[#3b82f6] text-white font-label-md text-label-md py-2 rounded font-bold hover:bg-[#2563eb] transition-colors shadow-[0_0_15px_rgba(59,130,246,0.3)] cursor-pointer"
-                        onClick={() => alert("Keeping Option B")}
+                        onClick={() => resolveConflict('keep_conflict')}
                       >
                         Keep B
                       </button>
@@ -170,10 +234,10 @@ export default function ConflictResolution() {
               <div className="flex justify-center my-2">
                 <button 
                   className="bg-surface-container-high border border-white/10 hover:border-white/30 text-on-surface font-label-md text-label-md py-3 px-8 rounded-full transition-all hover:bg-white/5 flex items-center gap-2 shadow-lg cursor-pointer"
-                  onClick={() => alert("Keeping both copies")}
+                  onClick={() => resolveConflict('keep_both')}
                 >
                   <span className="material-symbols-outlined text-sm">call_split</span>
-                  Keep Both (Rename B to "Conflicted Copy")
+                  Keep Both (Rename B to "Resolved Copy")
                 </button>
               </div>
             </>

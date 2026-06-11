@@ -4,6 +4,7 @@ Monitors physical directory vectors and schedules debounced event processing tas
 """
 
 import time
+import os
 import threading
 from pathlib import Path
 from watchdog.observers import Observer
@@ -14,6 +15,33 @@ from diff_engine import process_single_file, run_full_scan
 from sync_engine import start_sync_loop 
 
 DEBOUNCE_DELAY = 2.0
+
+# Thread-safe set of paths to suppress.
+_suppressed_paths: set[str] = set()
+_suppression_lock = threading.Lock()
+_suppression_ttl: dict[str, float] = {}
+
+SUPPRESSION_WINDOW_SECONDS = 5.0
+
+def suppress_path(path: str):
+    """Mark a path for suppression. The watchdog will ignore events
+    for this path for the next SUPPRESSION_WINDOW_SECONDS seconds."""
+    normalized = os.path.normpath(path)
+    with _suppression_lock:
+        _suppressed_paths.add(normalized)
+        _suppression_ttl[normalized] = time.time() + SUPPRESSION_WINDOW_SECONDS
+
+def is_suppressed(path: str) -> bool:
+    """Check if a path is currently suppressed."""
+    normalized = os.path.normpath(path)
+    with _suppression_lock:
+        if normalized not in _suppressed_paths:
+            return False
+        if time.time() > _suppression_ttl.get(normalized, 0):
+            _suppressed_paths.discard(normalized)
+            _suppression_ttl.pop(normalized, None)
+            return False
+        return True
 
 class WatcherHandler(FileSystemEventHandler):
     def __init__(self):
@@ -37,14 +65,20 @@ class WatcherHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         if not event.is_directory: 
+            if is_suppressed(event.src_path):
+                return
             self._schedule("created", event.src_path)
 
     def on_modified(self, event):
         if not event.is_directory: 
+            if is_suppressed(event.src_path):
+                return
             self._schedule("modified", event.src_path)
 
     def on_deleted(self, event):
         if not event.is_directory:
+            if is_suppressed(event.src_path):
+                return
             with self._lock:
                 timer = self._timers.pop(event.src_path, None)
                 if timer: 
@@ -53,6 +87,8 @@ class WatcherHandler(FileSystemEventHandler):
 
     def on_moved(self, event):
         if not event.is_directory:
+            if is_suppressed(event.src_path) or is_suppressed(event.dest_path):
+                return
             with self._lock:
                 timer = self._timers.pop(event.src_path, None)
                 if timer: 
@@ -72,10 +108,7 @@ def main():
     print("[STARTUP] Running system structural file-tree scan...")
     run_full_scan()
     
-    print("[STARTUP] Spawning Multi-threaded Sync Core Daemon...")
-    sync_thread = threading.Thread(target=start_sync_loop, daemon=True)
-    sync_thread.start()
-
+    # Sync Core Daemon is now spawned by local_api.py to avoid duplicate runs
     event_handler = WatcherHandler()
     observer = Observer()
     observer.schedule(event_handler, str(watch_path), recursive=True)

@@ -8,11 +8,9 @@ import logging
 import sqlite3
 import requests
 import config
+import resilient_http
 
 logger = logging.getLogger(__name__)
-
-# Reused connection pool session for TCP keep-alive
-_session = requests.Session()
 
 
 # ─── Settings Database Helpers ───────────────────────────────────────────────
@@ -74,16 +72,36 @@ def _request(method: str, endpoint: str, **kwargs) -> requests.Response:
     url = f"{config.SERVER_BASE_URL}{endpoint}"
     
     token = _get_token()
-    if token:
-        headers = kwargs.get("headers", {})
-        if "Authorization" not in headers:
-            headers["Authorization"] = f"Bearer {token}"
-        kwargs["headers"] = headers
+    headers = kwargs.pop("headers", {})
+    if token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {token}"
+    kwargs["headers"] = headers
 
-    resp = _session.request(method, url, **kwargs)
+    resp = resilient_http.request(method, url, **kwargs)
 
-    if resp.status_code == 401:
-        print("[AUTH ERROR] Unauthorized (401). Sync has been suspended. Please login again.")
+    if resp.status_code == 401 and endpoint != "/auth/refresh":
+        # Attempt to refresh the token
+        old_token = _get_token()
+        if old_token:
+            refresh_headers = {"Authorization": f"Bearer {old_token}"}
+            refresh_resp = resilient_http.request(
+                "POST", 
+                f"{config.SERVER_BASE_URL}/auth/refresh", 
+                headers=refresh_headers
+            )
+            if refresh_resp.status_code == 200:
+                new_token = refresh_resp.json().get("access_token")
+                if new_token:
+                    _save_token(new_token)
+                    # Update config state
+                    config.sync_suspended = False
+                    # Retry the original request
+                    headers["Authorization"] = f"Bearer {new_token}"
+                    kwargs["headers"] = headers
+                    return resilient_http.request(method, url, **kwargs)
+        
+        # If refresh fails or no token, suspend sync
+        print("[AUTH ERROR] Unauthorized (401) and refresh failed. Sync has been suspended. Please login again.")
         config.sync_suspended = True
 
     return resp
@@ -99,8 +117,8 @@ def register_user(username: str, email: str, password: str) -> tuple[bool, str]:
             "email": email,
             "password": password
         }
-        # Explicitly use _session to avoid token injection & 401 checks for register
-        resp = _session.post(
+        # Explicitly use resilient_http to avoid token injection & 401 checks for register
+        resp = resilient_http.request("POST",
             f"{config.SERVER_BASE_URL}/users/register",
             json=payload,
             timeout=30
@@ -122,9 +140,8 @@ def login_user(email: str, password: str) -> tuple[bool, str]:
     """Authenticates with the server and saves the token if successful (POST /users/login)."""
     try:
         payload = {"email": email, "password": password}
-        # Explicitly use _session to avoid token injection & 401 checks for login
-        resp = _session.post(
-            f"{config.SERVER_BASE_URL}/users/login",
+        resp = resilient_http.request("POST",
+            f"{config.SERVER_BASE_URL}/auth/login",
             json=payload,
             timeout=30
         )
@@ -132,6 +149,27 @@ def login_user(email: str, password: str) -> tuple[bool, str]:
             token = resp.json().get("access_token")
             if token:
                 _save_token(token)
+                
+                # Register device to get a valid device_id from server
+                me_resp = resilient_http.request("GET", f"{config.SERVER_BASE_URL}/auth/me", headers={"Authorization": f"Bearer {token}"}, timeout=10)
+                if me_resp.status_code == 200:
+                    user_id = me_resp.json().get("id")
+                    import platform
+                    import hashlib
+                    dir_hash = hashlib.md5(config.DB_PATH.encode()).hexdigest()[:6]
+                    device_name = f"{platform.node()}-{dir_hash}-client"
+                    dev_payload = {"user_id": user_id, "device_name": device_name}
+                    dev_resp = resilient_http.request("POST", f"{config.SERVER_BASE_URL}/devices/register", json=dev_payload, timeout=10)
+                    if dev_resp.status_code in [200, 201]:
+                        device_id = dev_resp.json().get("id")
+                        _save_setting("device_id", str(device_id))
+                        logger.info("Successfully registered device with server: %s", device_id)
+                        print(f"Successfully registered device with server: {device_id}")
+                    else:
+                        print(f"FAILED to register device: {dev_resp.status_code} {dev_resp.text}")
+                else:
+                    print(f"FAILED to get /auth/me: {me_resp.status_code} {me_resp.text}")
+                
                 config.sync_suspended = False
                 return True, "Login successful."
             else:
@@ -152,7 +190,7 @@ def login_user(email: str, password: str) -> tuple[bool, str]:
 def health_check() -> bool:
     """Ping the server's /health endpoint to check network availability."""
     try:
-        resp = _session.get(f"{config.SERVER_BASE_URL}/health", timeout=5)
+        resp = resilient_http.request("GET", f"{config.SERVER_BASE_URL}/health", timeout=5)
         return resp.status_code == 200
     except requests.RequestException as e:
         logger.warning("Health check failed: %s", e)
@@ -257,6 +295,17 @@ def upload_chunk(local_path: str, offset: int, chunk_size: int, chunk_index: int
 
 
 # ─── WEEK 6 DOWNLOAD PIPELINE IMPLEMENTATION ─────────────────────────────────
+
+def get_upload_status(version_id: int) -> tuple[bool, dict]:
+    """GET /sync/upload/status/{version_id} — Fetch which chunks have been received."""
+    try:
+        resp = _request("GET", f"/sync/upload/status/{version_id}", timeout=30)
+        resp.raise_for_status()
+        return True, resp.json()
+    except requests.RequestException as e:
+        logger.error("Failed to get upload status for version %d: %s", version_id, e)
+        return False, {}
+
 
 def get_server_metadata() -> tuple[bool, list]:
     """GET /sync/metadata — Fetch downstream remote server file manifest."""

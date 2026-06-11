@@ -14,13 +14,24 @@ Extracted from: routers/sync.py::announce_metadata (originally ~330 lines)
 import os
 import logging
 from datetime import datetime, timezone
+import asyncio
 
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
+from sqlalchemy.exc import IntegrityError
 
 from .. import models, schemas, storage
+from ..routers.events import publish_event
 
 logger = logging.getLogger(__name__)
+
+def _fire_event(user_id: int, event_type: str, payload: dict):
+    """Synchronous wrapper to publish async SSE events from sync code."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(publish_event(user_id, event_type, payload))
+    except RuntimeError:
+        pass
 
 # ── Module-level constants (shared with the router via import) ────────────────
 
@@ -126,13 +137,21 @@ def _get_or_create_file(
     ).first()
 
     if not file_record:
-        file_record = models.File(
-            user_id=user_id,
-            file_path=file_path,
-            is_deleted=False,
-        )
-        db.add(file_record)
-        db.flush()  # Populate file_record.id without committing the transaction.
+        try:
+            with db.begin_nested():
+                file_record = models.File(
+                    user_id=user_id,
+                    file_path=file_path,
+                    is_deleted=False,
+                )
+                db.add(file_record)
+                db.flush()  # Populate file_record.id without committing the transaction.
+        except IntegrityError:
+            # Another transaction inserted the record concurrently.
+            file_record = db.query(models.File).filter(
+                models.File.user_id == user_id,
+                models.File.file_path == file_path,
+            ).first()
 
     return file_record
 
@@ -142,6 +161,8 @@ def _handle_deletion(db: Session, file_record: models.File) -> schemas.MetadataR
     file_record.is_deleted = True
     file_record.updated_at = func.now()
     db.commit()
+
+    _fire_event(file_record.user_id, "file_deleted", {"file_id": file_record.id, "file_path": file_record.file_path})
 
     return schemas.MetadataResponse(
         status="deleted_acknowledged",
@@ -167,6 +188,7 @@ def _check_hash_dedup(
     existing_version = db.query(models.Version).filter(
         models.Version.file_id == file_record.id,
         models.Version.hash == incoming_hash,
+        models.Version.upload_status != models.UploadStatus.failed,
     ).first()
 
     if not existing_version:
@@ -223,6 +245,8 @@ def _handle_empty_file(
     file_record.updated_at = func.now()
     db.commit()
     db.refresh(new_version)
+
+    _fire_event(user_id, "file_updated", {"file_id": file_record.id, "file_path": payload.path, "version_id": new_version.id})
 
     try:
         storage.put_object(storage_key, b"")
@@ -292,6 +316,8 @@ def _handle_conflict_if_any(
         client_ts = client_ts.replace(tzinfo=timezone.utc)
     if server_ts.tzinfo is None:
         server_ts = server_ts.replace(tzinfo=timezone.utc)
+        
+    client_ts = min(client_ts, datetime.now(timezone.utc))
 
     client_wins = client_ts >= server_ts
 
@@ -380,6 +406,8 @@ def _resolve_client_wins(
     db.commit()
     db.refresh(winner_version)
 
+    _fire_event(user_id, "conflict_detected", {"file_id": file_record.id, "file_path": payload.path, "conflict_path": conflict_path, "winner_version_id": winner_version.id})
+
     logger.info(
         "CONFLICT RESOLVED (LWW): client wins for '%s'. "
         "Server version saved as conflict copy '%s'.",
@@ -437,6 +465,8 @@ def _resolve_server_wins(
     db.commit()
     db.refresh(conflict_version)
 
+    _fire_event(user_id, "conflict_detected", {"file_id": file_record.id, "file_path": payload.path, "conflict_path": conflict_path, "winner_version_id": server_latest.id})
+
     logger.info(
         "CONFLICT RESOLVED (LWW): server wins for '%s'. "
         "Client version saved as conflict copy '%s'.",
@@ -485,6 +515,7 @@ def _accept_new_version(
         storage_path=storage_key,
         parent_version_id=payload.base_version_id,
         announced_at=payload.client_modified_at,
+        is_conflict_copy="(Conflicted copy)" in payload.path,
     )
     db.add(new_version)
     db.flush()
@@ -494,6 +525,8 @@ def _accept_new_version(
     file_record.updated_at = func.now()
     db.commit()
     db.refresh(new_version)
+
+    _fire_event(user_id, "file_created", {"file_id": file_record.id, "file_path": payload.path, "version_id": new_version.id})
 
     return schemas.MetadataResponse(
         status="accepted",

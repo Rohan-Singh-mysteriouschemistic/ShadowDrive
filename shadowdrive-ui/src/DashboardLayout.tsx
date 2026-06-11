@@ -152,9 +152,20 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             <span className="font-label-md text-label-md text-on-surface-variant">Storage</span>
             <span className="font-code-sm text-code-sm text-primary">{storage.used < 0.01 ? '0' : storage.used.toFixed(2)} GB / {storage.total >= 1000 ? `${(storage.total/1000).toFixed(0)} TB` : `${storage.total} GB`}</span>
           </div>
-          <div className="w-full h-1.5 bg-surface-container-high rounded-full overflow-hidden">
+          <div className="w-full h-1.5 bg-surface-container-high rounded-full overflow-hidden mb-6">
             <div className="h-full bg-primary rounded-full shadow-[0_0_8px_rgba(78,222,163,0.6)] animate-[pulse_2s_ease-in-out_infinite]" style={{ width: `${(storage.used / storage.total) * 100}%` }}></div>
           </div>
+          
+          <button
+            onClick={() => {
+              localStorage.removeItem('shadowdrive_token');
+              navigate('/auth');
+            }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-error hover:bg-error/10 transition-all font-body-md text-body-md cursor-pointer border border-error/20"
+          >
+            <span className="material-symbols-outlined text-[20px]">logout</span>
+            <span>Sign Out</span>
+          </button>
         </div>
       </aside>
 

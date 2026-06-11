@@ -4,12 +4,12 @@ echo    Starting ShadowDrive++ Project
 echo ==================================================
 
 echo.
-echo [1/4] Starting Docker containers (PostgreSQL, MinIO ^& Redis)...
+echo [1/5] Starting Docker containers (PostgreSQL, MinIO ^& Redis)...
 cd "Server-Logic\server"
 docker-compose up -d
 
 echo.
-echo [2/4] Starting FastAPI Backend Server...
+echo [2/5] Starting FastAPI Backend Server...
 :: Using start to open a new command prompt window for the server
 start "ShadowDrive Backend Server" cmd /k "python -m uvicorn app.main:app --reload"
 
@@ -18,9 +18,9 @@ echo Waiting 5 seconds for the backend server to initialize...
 timeout /t 5 /nobreak
 
 echo.
-echo [3/4] Starting RQ Background Worker...
+echo [3/5] Starting RQ Background Worker...
 :: Using start to open a new command prompt window for the RQ worker
-start "ShadowDrive RQ Worker" cmd /k "rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker"
+start "ShadowDrive RQ Worker" cmd /k "python -m rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker"
 
 echo.
 echo [4/5] Starting Local Client API Agent...

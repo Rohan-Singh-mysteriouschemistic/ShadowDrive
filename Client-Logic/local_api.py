@@ -4,11 +4,13 @@ from pydantic import BaseModel
 import threading
 import uvicorn
 import sys
+import os
 
 import network_client
 import crypto_utils
 import config
 import watcher
+import event_listener
 
 app = FastAPI()
 
@@ -110,6 +112,7 @@ async def handle_ui_upload(file: UploadFile = File(...)):
         os.makedirs(watch_dir, exist_ok=True)
         
     file_path = os.path.join(watch_dir, file.filename)
+
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
@@ -135,6 +138,8 @@ def startup_event():
             config.encryption_key = bytes.fromhex(key_hex)
             print("[INFO] Encryption key loaded from local database.")
         _start_watcher_if_needed()
+        event_listener.start()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    port = int(os.environ.get("API_PORT", 8001))
+    uvicorn.run(app, host="127.0.0.1", port=port)
