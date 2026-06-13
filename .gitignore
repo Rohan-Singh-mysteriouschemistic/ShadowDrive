@@ -25,7 +25,7 @@ docs/
 .code-review-graph/
 
 # Ignore temporary AI implementation logs
-BMAD/implementation-artifacts/
+BMAD/
 
 # 1. Local Database (Root level)
 shadow.db
@@ -45,3 +45,13 @@ venv/
 
 
 **/uploads/
+
+# Logs
+*.log
+
+# Agent & AI generated folders
+.agent/
+.agents/
+.claude/
+.github/
+_bmad/
