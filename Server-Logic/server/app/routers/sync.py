@@ -3,7 +3,7 @@ import shutil
 import logging
 import hashlib
 from fastapi import status, HTTPException, Depends, APIRouter, UploadFile, File, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy import text
@@ -13,7 +13,7 @@ from ..database import get_db
 from .. import storage
 from ..models import UploadStatus
 from ..worker import enqueue_verify, enqueue_assemble_and_verify
-from ..services.metadata import process_metadata_sync
+from ..services.metadata import process_metadata_sync, _fire_event
 from ..dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,9 @@ def upload_file(
         total_bytes = len(file_bytes)
 
         # ── Step 3.5: Enforce Storage Quota ──────────────────────────────
+        # Lock the user record to prevent race conditions during concurrent uploads
+        db.query(models.User).filter(models.User.id == current_user.id).with_for_update().first()
+        
         sql = """
             SELECT COALESCE(SUM(v.size_bytes), 0)
             FROM (
@@ -151,6 +154,8 @@ def upload_file(
         job_id = enqueue_verify(version_record.id, version_record.hash)
         version_record.job_id = job_id
         db.commit()
+
+        _fire_event(user_id, "upload_processing", {"file_path": remote_path, "version_id": version_record.id})
 
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
@@ -237,12 +242,6 @@ def upload_chunk(
                 detail="Not authorized to upload chunks for this file version."
             )
 
-        if not version_record:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Version {version_id} not found. Call /sync/announce first."
-            )
-
         # Validate chunk_index bounds
         if chunk_index < 0 or chunk_index >= total_chunks:
             raise HTTPException(
@@ -255,6 +254,9 @@ def upload_chunk(
         chunk_size = len(chunk_bytes)
 
         # ── Step 2.5: Enforce Storage Quota ──────────────────────────────
+        # Lock the user record to prevent race conditions
+        db.query(models.User).filter(models.User.id == current_user.id).with_for_update().first()
+        
         sql = """
             SELECT COALESCE(SUM(v.size_bytes), 0)
             FROM (
@@ -395,7 +397,7 @@ def get_metadata(
         # Get all active (non-deleted) files for this user
         files = db.query(models.File).filter(
             models.File.user_id == user_id,
-            models.File.is_deleted == False
+            models.File.is_deleted.is_(False)
         ).all()
 
         result = []
@@ -441,6 +443,9 @@ def delete_file(
         
     file_record.is_deleted = True
     db.commit()
+
+    _fire_event(user_id, "file_deleted", {"file_id": file_id, "file_path": file_record.file_path})
+
     return {"status": "deleted"}
 
 from typing import Optional
@@ -512,16 +517,11 @@ def get_metadata_diff(
     try:
         # ── Step 1: Validate device ──────────────────────────────────────
         device = db.query(models.Device).filter(
-            models.Device.id == device_id
+            models.Device.id == device_id,
+            models.Device.user_id == user_id
         ).first()
 
         if not device:
-            # Auto-create device for the authenticated user
-            device = models.Device(id=device_id, user_id=user_id, device_name=f"Device-{device_id}")
-            db.add(device)
-            db.commit()
-            logger.info(f"Auto-created Device {device_id} for User {user_id}.")
-        elif device.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access sync diffs for this device."
@@ -531,7 +531,7 @@ def get_metadata_diff(
         # All non-deleted files for this user with a completed version
         server_files = db.query(models.File).filter(
             models.File.user_id == user_id,
-            models.File.is_deleted == False
+            models.File.is_deleted.is_(False)
         ).all()
 
         # Map file_id → (File, latest completed Version)
@@ -640,7 +640,6 @@ def download_file(
         # ── Fetch from MinIO ─────────────────────────────────────────────
         file_bytes = storage.get_object(storage_path)
 
-        from fastapi.responses import Response
         return Response(
             content=file_bytes,
             media_type="application/octet-stream",
@@ -700,7 +699,6 @@ def download_chunk(
 
         file_bytes = storage.get_object(stored.storage_path)
 
-        from fastapi.responses import Response
         return Response(
             content=file_bytes,
             media_type="application/octet-stream",
@@ -828,3 +826,95 @@ def get_upload_status(
         "hash": version.hash,
         "storage_path": version.storage_path,
     }
+
+
+# ─── Week 8: Conflict Resolution API ────────────────────────────────────────
+
+from pydantic import BaseModel
+import os
+import re
+
+class ResolveConflictRequest(BaseModel):
+    original_file_id: int
+    conflict_file_id: int
+    resolution_choice: str
+
+@router.get("/conflicts", status_code=status.HTTP_200_OK)
+def get_conflicts(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Returns a list of all unresolved file conflicts."""
+    conflict_files = db.query(models.File).filter(
+        models.File.user_id == current_user.id,
+        models.File.is_deleted.is_(False),
+        models.File.file_path.like("%(Conflicted copy)%")
+    ).all()
+    
+    result = []
+    for c_file in conflict_files:
+        original_path = re.sub(r' \(Conflicted copy\)', '', c_file.file_path)
+        o_file = db.query(models.File).filter(
+            models.File.user_id == current_user.id,
+            models.File.is_deleted.is_(False),
+            models.File.file_path == original_path
+        ).first()
+        
+        if o_file:
+            c_latest = db.query(models.Version).filter(models.Version.file_id == c_file.id).order_by(models.Version.created_at.desc()).first()
+            o_latest = db.query(models.Version).filter(models.Version.file_id == o_file.id).order_by(models.Version.created_at.desc()).first()
+            
+            result.append({
+                "id": str(c_file.id),
+                "filename": os.path.basename(original_path),
+                "path": original_path,
+                "timeDetected": c_latest.created_at.isoformat() if c_latest else "",
+                "status": "Needs Resolution",
+                "original_file_id": o_file.id,
+                "conflict_file_id": c_file.id,
+                "optionA": {
+                    "device": "Original",
+                    "timestamp": o_latest.client_modified_at.isoformat() if o_latest and o_latest.client_modified_at else "",
+                    "size": f"{o_latest.size_bytes} B" if o_latest else "0 B",
+                    "hash": o_latest.hash if o_latest else ""
+                },
+                "optionB": {
+                    "device": "Conflicted",
+                    "timestamp": c_latest.client_modified_at.isoformat() if c_latest and c_latest.client_modified_at else "",
+                    "size": f"{c_latest.size_bytes} B" if c_latest else "0 B",
+                    "hash": c_latest.hash if c_latest else ""
+                }
+            })
+            
+    return result
+
+@router.post("/resolve_conflict", status_code=status.HTTP_200_OK)
+def resolve_conflict(
+    req: ResolveConflictRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    from app.services.metadata import _fire_event
+    
+    o_file = db.query(models.File).filter(models.File.id == req.original_file_id, models.File.user_id == current_user.id).first()
+    c_file = db.query(models.File).filter(models.File.id == req.conflict_file_id, models.File.user_id == current_user.id).first()
+    
+    if not o_file or not c_file:
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    if req.resolution_choice == 'keep_original':
+        c_file.is_deleted = True
+        _fire_event(current_user.id, "file_deleted", {"file_id": c_file.id, "file_path": c_file.file_path})
+    elif req.resolution_choice == 'keep_conflict':
+        o_file.is_deleted = True
+        c_file.file_path = o_file.file_path
+        _fire_event(current_user.id, "file_deleted", {"file_id": o_file.id, "file_path": o_file.file_path})
+        _fire_event(current_user.id, "file_created", {"file_id": c_file.id, "file_path": c_file.file_path})
+    elif req.resolution_choice == 'keep_both':
+        c_file.file_path = c_file.file_path.replace("(Conflicted copy)", "(Resolved copy)")
+        _fire_event(current_user.id, "file_created", {"file_id": c_file.id, "file_path": c_file.file_path})
+    else:
+        raise HTTPException(status_code=400, detail="Invalid resolution choice")
+        
+    db.commit()
+    return {"status": "resolved"}

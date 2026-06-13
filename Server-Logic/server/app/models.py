@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, BigInteger, UniqueConstraint, Enum as SAEnum
 import enum
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from .database import Base
 
 class User(Base):
@@ -60,6 +61,7 @@ class Version(Base):
     __tablename__ = "versions"
     id = Column(BigInteger, primary_key=True, index=True)
     file_id = Column(BigInteger, ForeignKey("files.id"), nullable=False)
+    file = relationship("File")
     version_num = Column(Integer, nullable=False)
     hash = Column(String(64), nullable=False)
     size_bytes = Column(BigInteger, nullable=False)

@@ -8,12 +8,14 @@ import sqlite3
 import os
 import threading
 import queue
+from typing import Optional
 from dataclasses import dataclass, field
 
 import network_client
 import config
 import hash_utils  # <--- WEEK 7 ADDITION: Needed for conflict state checking
 import crypto_utils
+import event_listener
 
 @dataclass
 class UploadJob:
@@ -27,6 +29,7 @@ class UploadJob:
     retry_count: int = 0
     completed_chunks: set = None
     missing_chunks: list = None  # Phase 1: Only these chunk indices need uploading
+    file_id: int = 0
 
 upload_queue: queue.Queue = queue.Queue()
 
@@ -130,6 +133,21 @@ def prepare_encrypted_payload(full_path: str, plaintext_hash: str) -> tuple[str,
     return encrypted_file_hash, encrypted_chunk_hashes, encrypted_chunks_data
 
 
+def _ack_upload(file_id: int, version_id: int):
+    """Tell the server that THIS device now has this version.
+    Without this, /metadata/diff will return the file as 'outdated'
+    and the client will try to download its own upload."""
+    try:
+        network_client.ack_sync(
+            device_id=_get_device_id(),
+            file_id=file_id,
+            version_id=version_id,
+        )
+    except Exception as e:
+        print(f"ack_sync failed for file_id={file_id}: {e}")
+
+
+
 def finalize_local_db_after_upload(full_path: str, plaintext_hash: str, version_id: int):
     """
     Once an upload succeeds and the server registers the version, finalize
@@ -208,80 +226,81 @@ def _upload_worker():
                     print(f"[UPLOAD SUCCESS] {job.remote_path} (single-shot)")
                     version_id = data.get("version_id", 0)
                     finalize_local_db_after_upload(job.local_path, expected_plain_hash, version_id)
+                    _ack_upload(job.file_id, version_id)
                     _mark_synced_db(job.event_id)
                     _clear_in_flight(job.event_id)
                 else:
                     _handle_failed_job(job, data)
             else:
-                # Chunked upload workflow execution path
-                total_chunks = (job.file_size + config.CHUNK_SIZE - 1) // config.CHUNK_SIZE
-                
-                # Phase 1 Delta Sync: Determine which chunks actually need uploading
-                if job.missing_chunks is not None:
-                    chunks_to_upload = set(job.missing_chunks)
-                    skipped = total_chunks - len(chunks_to_upload)
-                    if skipped > 0:
-                        print(f"[DELTA SYNC] Skipping {skipped}/{total_chunks} unchanged chunks for {job.remote_path}")
-                else:
-                    # Fallback: upload all chunks (no delta info from server)
-                    chunks_to_upload = set(range(total_chunks))
-                
-                print(f"[UPLOAD CHUNKED] Spooling {len(chunks_to_upload)}/{total_chunks} parts for {job.remote_path} (already finished: {len(job.completed_chunks)})")
-                
-                all_chunks_succeeded = True
-                last_error_data = {}
-                for i in range(total_chunks):
-                    # Skip chunks the server already has (delta sync)
-                    if i not in chunks_to_upload:
-                        continue
-                    if i in job.completed_chunks:
-                        continue
-                        
-                    offset = i * config.CHUNK_SIZE
-                    current_chunk_size = min(config.CHUNK_SIZE, job.file_size - offset)
-                    
-                    if config.encryption_key:
-                        chunk_ok, chunk_data = network_client.upload_chunk(
-                            local_path=job.local_path,
-                            offset=offset,
-                            chunk_size=current_chunk_size,
-                            chunk_index=i,
-                            total_chunks=total_chunks,
-                            file_hash=enc_file_hash,
-                            version_id=job.version_id,
-                            data=enc_chunks_data[i]
-                        )
-                    else:
-                        chunk_ok, chunk_data = network_client.upload_chunk(
-                            local_path=job.local_path,
-                            offset=offset,
-                            chunk_size=current_chunk_size,
-                            chunk_index=i,
-                            total_chunks=total_chunks,
-                            file_hash=job.file_hash,
-                            version_id=job.version_id
-                        )
-                    if chunk_ok:
-                        job.completed_chunks.add(i)
-                    else:
-                        print(f"[UPLOAD CHUNKED] Failure on part index {i}/{total_chunks}")
-                        all_chunks_succeeded = False
-                        last_error_data = chunk_data
-                        break
-                
-                if all_chunks_succeeded:
-                    print(f"[UPLOAD CHUNKED SUCCESS] Completed all blocks for {job.remote_path}")
-                    finalize_local_db_after_upload(job.local_path, expected_plain_hash, job.version_id)
-                    _mark_synced_db(job.event_id)
-                    _clear_in_flight(job.event_id)
-                else:
-                    _handle_failed_job(job, last_error_data)
+                _upload_chunks_resilient(job, expected_plain_hash, enc_file_hash, enc_chunks_data)
                     
         except Exception as e:
             print(f"[UPLOAD ERROR] Unexpected crash in transiting worker: {e}")
             _handle_failed_job(job, {"error": str(e), "retriable": True})
         finally:
             upload_queue.task_done()
+
+def _upload_chunks_resilient(job: UploadJob, expected_plain_hash: str, enc_file_hash: str = None, enc_chunks_data: list = None):
+    """Upload file chunks with per-chunk retry and resume capability."""
+    import resilient_http
+    
+    total_chunks = (job.file_size + config.CHUNK_SIZE - 1) // config.CHUNK_SIZE
+    
+    # Check if we have server delta info
+    if job.missing_chunks is not None:
+        chunks_to_upload = set(job.missing_chunks)
+        skipped = total_chunks - len(chunks_to_upload)
+        if skipped > 0:
+            print(f"[DELTA SYNC] Skipping {skipped}/{total_chunks} unchanged chunks for {job.remote_path}")
+    else:
+        chunks_to_upload = set(range(total_chunks))
+    
+    print(f"[UPLOAD CHUNKED] Spooling {len(chunks_to_upload)}/{total_chunks} parts for {job.remote_path} (already finished: {len(job.completed_chunks)})")
+    
+    with open(job.local_path, 'rb') as f:
+        for chunk_index in range(total_chunks):
+            if chunk_index not in chunks_to_upload:
+                continue
+            if chunk_index in job.completed_chunks:
+                continue
+                
+            offset = chunk_index * config.CHUNK_SIZE
+            chunk_size = min(config.CHUNK_SIZE, job.file_size - offset)
+            
+            if enc_chunks_data is not None:
+                chunk_data = enc_chunks_data[chunk_index]
+                file_hash_to_send = enc_file_hash
+            else:
+                f.seek(offset)
+                chunk_data = f.read(chunk_size)
+                file_hash_to_send = job.file_hash
+            
+            # network_client._request handles auth token injection and JWT refresh automatically
+            try:
+                resp = network_client._request(
+                    "POST",
+                    "/sync/upload_chunk",
+                    files={"chunk": (f"chunk_{chunk_index}", chunk_data)},
+                    data={
+                        "version_id": str(job.version_id),
+                        "chunk_index": str(chunk_index),
+                        "total_chunks": str(total_chunks),
+                        "file_hash": file_hash_to_send,
+                    }
+                )
+                resp.raise_for_status()
+                job.completed_chunks.add(chunk_index)
+            except Exception as e:
+                print(f"[UPLOAD CHUNKED] Failure on part index {chunk_index}/{total_chunks}: {e}")
+                _handle_failed_job(job, {"error": str(e)})
+                return
+                
+    print(f"[UPLOAD CHUNKED SUCCESS] Completed all blocks for {job.remote_path}")
+    finalize_local_db_after_upload(job.local_path, expected_plain_hash, job.version_id)
+    _ack_upload(job.file_id, job.version_id)
+    _mark_synced_db(job.event_id)
+    _clear_in_flight(job.event_id)
+
 
 def _handle_failed_job(job: UploadJob, error_data: dict):
     """Processes backoff retry increments on critical connection dropped states."""
@@ -331,28 +350,21 @@ def _mark_synced_db(event_id: int):
 
 # ─── WEEK 6/7 DOWNLOAD PIPELINE logic + Phase 1 Delta Download ──────────────
 
-def _get_device_id() -> int:
-    """Gets device_id from settings table, generating a unique random one if absent."""
-    import random
+def _get_device_id() -> Optional[int]:
+    """Gets device_id from settings table."""
     try:
         conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         cur.execute("SELECT value FROM settings WHERE key = 'device_id'")
         row = cur.fetchone()
-        if row:
-            device_id = int(row[0])
-        else:
-            # Generate random 6-digit device_id
-            device_id = random.randint(100000, 999999)
-            cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('device_id', ?)", (str(device_id),))
-            conn.commit()
-            print(f"[SYNC ENGINE] Generated new unique device_id: {device_id}")
         conn.close()
-        return device_id
+        if row:
+            return int(row[0])
+        return None
     except Exception as e:
-        print(f"[SYNC ENGINE] Error getting/generating device_id: {e}. Defaulting to 1.")
-        return 1
+        logger.error("Error reading device_id: %s", e)
+        return None
 
 
 def process_downstream_downloads(device_id: int):
@@ -396,6 +408,8 @@ def process_downstream_downloads(device_id: int):
                 else:
                     print(f"[DOWNLOAD PIPELINE] Server deleted file, removing locally: {rel_path}")
                     if os.path.exists(full_local_path):
+                        from watcher import suppress_path
+                        suppress_path(full_local_path)
                         os.remove(full_local_path)
                 
                 cur.execute("DELETE FROM files WHERE file_path = ?", (full_local_path,))
@@ -416,31 +430,43 @@ def process_downstream_downloads(device_id: int):
 
             # Query shadow database tracking records
             try:
-                cur.execute("SELECT hash, encrypted_hash FROM files WHERE file_path = ?", (full_local_path,))
+                cur.execute("SELECT hash, encrypted_hash, version_id FROM files WHERE file_path = ?", (full_local_path,))
                 row = cur.fetchone()
             except sqlite3.OperationalError:
                 # Fallback if DB not fully migrated
                 cur.execute("SELECT hash FROM files WHERE file_path = ?", (full_local_path,))
                 row = cur.fetchone()
                 if row:
-                    row = (row[0], None)
+                    row = (row[0], None, 0)
 
             # WEEK 7: SIMULTANEOUS EDIT CONFLICT DETECTION
             is_conflict = False
             db_plain_hash = None
             db_enc_hash = None
+            db_version_id = 0
             if row is not None:
                 db_plain_hash = row[0]
                 db_enc_hash = row[1]
+                db_version_id = row[2] if len(row) > 2 else 0
+                
+                print(f"[DEBUG] db_version_id={db_version_id}, remote_version_id={version_id}, db_plain_hash={db_plain_hash}, remote_hash={remote_hash}")
+                
+                # FAST PATH: Skip download if we already have this version or a newer one locally!
+                # This handles race conditions where ack_sync hasn't reached the server yet.
+                if db_version_id >= version_id:
+                    print(f"[DOWNLOAD PIPELINE] Skipping {rel_path} (local version {db_version_id} >= remote {version_id})")
+                    network_client.ack_sync(device_id, file_id, db_version_id)
+                    continue
                 
                 # Check for updates: compare remote (encrypted) hash to stored encrypted hash
                 target_db_hash = db_enc_hash if (db_enc_hash and config.encryption_key) else db_plain_hash
                 if target_db_hash != remote_hash:
                     # The server has a new version. Check if we ALSO modified our local file!
-                    if os.path.exists(full_local_path):
-                        current_local_hash = hash_utils.hash_file(full_local_path)
-                        if current_local_hash and current_local_hash != db_plain_hash:
-                            is_conflict = True
+                    # If there's any pending event for this file, it means we have local modifications
+                    # that haven't been synced yet!
+                    cur.execute("SELECT 1 FROM events WHERE file_path = ? AND is_synced = 0", (full_local_path,))
+                    if cur.fetchone():
+                        is_conflict = True
 
             target_db_hash = db_enc_hash if (db_enc_hash and config.encryption_key) else db_plain_hash
             if row is None or target_db_hash != remote_hash:
@@ -449,14 +475,18 @@ def process_downstream_downloads(device_id: int):
                 if is_conflict:
                     timestamp = int(time.time())
                     root, ext = os.path.splitext(full_local_path)
-                    conflict_path = f"{root}_conflict_{timestamp}{ext}"
+                    conflict_path = f"{root} (Conflicted copy){ext}"
                     print(f"[CONFLICT DETECTED] Simultaneous edits on {rel_path}")
                     print(f" -> Moving your local work to: {os.path.basename(conflict_path)}")
-                    os.rename(full_local_path, conflict_path)
+                    import shutil
+                    shutil.copy2(full_local_path, conflict_path)
                 else:
                     print(f"[DOWNLOAD PIPELINE] Inconsistency detected. Pulling: {rel_path}")
 
                 os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
+
+                from watcher import suppress_path
+                suppress_path(full_local_path)  # ← Suppress BEFORE write
 
                 # ─── Phase 1: Delta Download Reconstruction ──────────────────
                 if remote_chunk_hashes:
@@ -590,25 +620,12 @@ def _delta_download_file(cur, conn, full_local_path: str, rel_path: str,
     network_client.ack_sync(device_id, file_id, version_id)
 
 
-def start_sync_loop():
-    """Background loop alternating between upload queues and downstream comparisons."""
-    print("[SYNC ENGINE] Initializing transaction event loop.")
-    
-    # Spawn the isolated background upload consumer pipeline
-    t = threading.Thread(target=_upload_worker, daemon=True)
-    t.start()
-
+def _heartbeat_worker():
+    """Lightweight daemon thread that calls send_heartbeat every 60 seconds."""
     while True:
         try:
-            if config.sync_suspended:
-                print("[SYNC ENGINE] Sync is suspended due to authentication error. Please login (python main.py login).")
-                time.sleep(config.SYNC_INTERVAL_SECONDS)
-                continue
-
-            if network_client.health_check():
+            if not config.sync_suspended and network_client.health_check():
                 device_id = _get_device_id()
-                
-                # Process Heartbeat and Commands Phase
                 hb_success, pending_commands = network_client.send_heartbeat(device_id)
                 if hb_success and pending_commands:
                     for cmd in pending_commands:
@@ -621,7 +638,6 @@ def start_sync_loop():
                             network_client.ack_command(device_id, cmd_id)
                         elif command_name == "REVOKE":
                             print("🚨 DEVICE ACCESS REVOKED BY SERVER 🚨 Wiping local data...")
-                            # Wipe SQLite token and exit
                             conn = sqlite3.connect(config.DB_PATH)
                             cur = conn.cursor()
                             cur.execute("DELETE FROM settings WHERE key IN ('access_token', 'device_id', 'encryption_key')")
@@ -632,6 +648,34 @@ def start_sync_loop():
                             sys.exit(0)
                         else:
                             network_client.ack_command(device_id, cmd_id)
+        except Exception as e:
+            pass
+        time.sleep(60)
+
+def start_sync_loop():
+    """Background loop alternating between upload queues and downstream comparisons."""
+    print("[SYNC ENGINE] Initializing transaction event loop.")
+    
+    # Spawn the isolated background upload consumer pipeline
+    t = threading.Thread(target=_upload_worker, daemon=True)
+    t.start()
+    
+    # Spawn the heartbeat worker (runs every 60s)
+    hb_thread = threading.Thread(target=_heartbeat_worker, daemon=True)
+    hb_thread.start()
+
+    while True:
+        try:
+            if config.sync_suspended:
+                print("[SYNC ENGINE] Sync is suspended due to authentication error. Please login (python main.py login).")
+                time.sleep(config.SYNC_INTERVAL_SECONDS)
+                continue
+
+            if network_client.health_check():
+                device_id = _get_device_id()
+                if device_id is None:
+                    time.sleep(config.SYNC_INTERVAL_SECONDS)
+                    continue
 
                 # Process Downstream Phase First (Week 6 Download Step)
                 process_downstream_downloads(device_id)
@@ -645,6 +689,9 @@ def start_sync_loop():
                 pending_events = cur.fetchall()
                 conn.close()
 
+                if pending_events:
+                    print(f"[DEBUG] Found {len(pending_events)} pending events at {time.time()}")
+                
                 for event in pending_events:
                     event_id = event["id"]
                     if event_id in _in_flight_events:
@@ -659,7 +706,7 @@ def start_sync_loop():
 
                     # Compute clean tracking paths relative to root target
                     relative_path = os.path.relpath(full_path, config.WATCH_DIR).replace("\\", "/")
-                    print(f"[SYNC] Upload Pipeline announcing: {relative_path}")
+                    print(f"[SYNC] Upload Pipeline announcing: {relative_path} at {time.time()}")
                     
                     # Phase 1: Compute chunk hashes for large files
                     chunk_hashes = None
@@ -702,7 +749,8 @@ def start_sync_loop():
                             file_size=file_size,
                             event_id=event_id,
                             plaintext_hash=file_hash,
-                            missing_chunks=missing_chunks
+                            missing_chunks=missing_chunks,
+                            file_id=response_data.get("file_id", 0)
                         )
                         _mark_in_flight(event_id)
                         upload_queue.put(job)
@@ -713,7 +761,9 @@ def start_sync_loop():
         except Exception as e:
             print(f"[SYNC ENGINE CRASH LOOP DETECTED]: {e}")
             
-        time.sleep(config.SYNC_INTERVAL_SECONDS)
+        # Wait up to SYNC_INTERVAL_SECONDS seconds, but wake immediately if SSE nudges us.
+        event_listener.sync_nudge.wait(timeout=config.SYNC_INTERVAL_SECONDS)
+        event_listener.sync_nudge.clear()
 
 def main():
     """Direct entry diagnostic point if launched explicitly."""

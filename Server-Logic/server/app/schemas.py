@@ -30,7 +30,7 @@ class DeviceOut(BaseModel):
     id: int
     device_name: str
     is_online: bool
-    last_seen_at: datetime | None
+    last_seen_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -60,11 +60,11 @@ class MetadataAnnounce(BaseModel):
                           Last-Write-Wins tiebreaking.
     """
     path: str
-    hash: str | None = None
+    hash: Optional[str] = None
     event: str
-    base_version_id: int | None = None
-    client_modified_at: datetime | None = None
-    chunk_hashes: list[str] | None = None
+    base_version_id: Optional[int] = None
+    client_modified_at: Optional[datetime] = None
+    chunk_hashes: Optional[list[str]] = None
 
 
 class ConflictInfo(BaseModel):
@@ -84,20 +84,20 @@ class MetadataResponse(BaseModel):
     """
     status: str          # "accepted" | "already_synced" | "deleted_acknowledged" | "conflict_resolved"
     file_id: int
-    version_id: int | None = None
+    version_id: Optional[int] = None
     upload_required: bool
     conflict_info: Optional[ConflictInfo] = None
-    missing_chunks: list[int] | None = None
+    missing_chunks: Optional[list[int]] = None
 
 
 class FileVersionOut(BaseModel):
     """Used by GET /sync/metadata to tell a client what files exist on the server."""
-    id: int | None = None
+    id: Optional[int] = None
     file_path: str
     hash: str
     version_num: int
     size_bytes: int
-    storage_path: str | None = None
+    storage_path: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -131,7 +131,7 @@ class DiffItem(BaseModel):
     version_id: int
     size_bytes: int
     storage_path: str    # MinIO key — client passes this back to /sync/download
-    chunk_hashes: list[str] | None = None
+    chunk_hashes: Optional[list[str]] = None
 
     class Config:
         from_attributes = True

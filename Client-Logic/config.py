@@ -11,8 +11,8 @@ SERVER_BASE_URL = os.getenv("SHADOWDRIVE_SERVER", "http://localhost:8000")
 # ─── Watch Directory ─────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Using unified watch_folder relative path to align across modules
-WATCH_DIR = os.getenv("SHADOWDRIVE_WATCH_DIR", os.path.join(BASE_DIR, "watch_folder"))
-DB_PATH = os.path.join(BASE_DIR, "shadow.db")
+WATCH_DIR = os.getenv("WATCH_DIR", os.getenv("SHADOWDRIVE_WATCH_DIR", os.path.join(BASE_DIR, "watch_folder")))
+DB_PATH = os.getenv("DB_PATH", os.getenv("SHADOWDRIVE_DB_PATH", os.path.join(BASE_DIR, "shadow.db")))
 
 # ─── Chunking Configuration ─────────────────────────────────────────────────
 # Split criteria for files processed through upload/download pipelines

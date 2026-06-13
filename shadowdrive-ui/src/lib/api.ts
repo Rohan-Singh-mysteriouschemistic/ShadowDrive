@@ -4,28 +4,81 @@ export function getToken(): string | null {
   return localStorage.getItem('shadowdrive_token');
 }
 
+/**
+ * Retry wrapper for API calls.
+ * Retries on network errors and 5xx status codes.
+ * Uses exponential backoff with jitter.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelay = 1000,
+): Promise<T> {
+  let lastError: any;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+
+      // Don't retry client errors (4xx) — they won't change
+      if (err instanceof Response && err.status >= 400 && err.status < 500) {
+        throw err;
+      }
+
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        const jitter = delay * 0.5 * (Math.random() * 2 - 1);
+        await new Promise(r => setTimeout(r, Math.max(100, delay + jitter)));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
-  const token = getToken();
-  
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
+  const doFetch = async () => {
+    const token = getToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> || {}),
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(`${BASE_URL}${endpoint}`, { ...options, headers });
+    if (!response.ok) throw response;
+    return response.json();
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  try {
+    return await withRetry(doFetch);
+  } catch (err: any) {
+    if (err instanceof Response && err.status === 401) {
+      // Token likely expired, try refreshing
+      const token = getToken();
+      if (token) {
+        try {
+          const refreshRes = await fetch(`${BASE_URL}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (refreshRes.ok) {
+            const data = await refreshRes.json();
+            localStorage.setItem('shadowdrive_token', data.access_token);
+            // Retry the original request with the new token
+            return await withRetry(doFetch);
+          }
+        } catch (refreshErr) {
+          console.error('[JWT Refresh] Failed to contact refresh endpoint', refreshErr);
+        }
+      }
+    }
+    // If not a 401, or if refresh failed, throw the original error
+    throw err;
   }
-
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  if (!response.ok) {
-    throw response;
-  }
-
-  return response.json();
 }
 
 async function calculateSHA256(file: File): Promise<string> {

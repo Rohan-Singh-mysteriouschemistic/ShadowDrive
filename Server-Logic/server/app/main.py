@@ -56,11 +56,12 @@ def health_check():
 
 
 # ─── Router Registration ────────────────────────────────────────────────────
-from .routers import user, device, sync, auth, system
+from .routers import user, device, sync, auth, system, events
 
 app.include_router(user.router)
 app.include_router(device.router)
 app.include_router(sync.router)
 app.include_router(auth.router)
 app.include_router(system.router)
+app.include_router(events.router)
 

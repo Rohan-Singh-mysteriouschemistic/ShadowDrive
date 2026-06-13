@@ -5,6 +5,7 @@ Tracks incremental differentials and logs state changes into local shadow DB ent
 
 import os
 import sqlite3
+import time
 from datetime import datetime
 from hash_utils import hash_file
 import config
@@ -97,6 +98,13 @@ def _log_event(cur, event_type, file_path, file_hash=None, version_id=0):
         INSERT INTO events (event_type, file_path, hash, timestamp, version_id)
         VALUES (?, ?, ?, ?, ?)
     """, (event_type, file_path, file_hash, timestamp, version_id))
+    
+    # Nudge the sync loop to upload immediately
+    try:
+        import event_listener
+        event_listener.sync_nudge.set()
+    except Exception:
+        pass
 
 def _delete_file(cur, path):
     """Clears tracking maps out of local shadow DB indices."""
@@ -149,12 +157,13 @@ def process_single_file(path, event_type):
             version_id = row[1] if row else 0
 
             if row is None:
-                print(f"[NEW]      {os.path.basename(path)}")
+                print(f"[NEW]      {os.path.basename(path)} at {time.time()}")
                 _log_event(cur, "new", path, file_hash, version_id)
             elif db_hash != file_hash:
-                print(f"[MODIFIED] {os.path.basename(path)}")
+                print(f"[MODIFIED] {os.path.basename(path)} at {time.time()}")
                 _log_event(cur, "modified", path, file_hash, version_id)
             else:
+                print(f"[IGNORED] {os.path.basename(path)} unchanged at {time.time()}")
                 conn.close()
                 return
 

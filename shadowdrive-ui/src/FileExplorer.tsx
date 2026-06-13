@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch, uploadFile, deleteFile, getDownloadUrl } from './lib/api';
+import { useEventStream } from './lib/useEventStream';
 
 type UploadStatus = 'pending' | 'uploading' | 'processing' | 'complete' | 'failed';
 
@@ -33,35 +34,55 @@ export default function FileExplorer() {
   const [fileToDelete, setFileToDelete] = useState<{id: string | number, name: string} | null>(null);
   const [editingFile, setEditingFile] = useState<{id: string | number, name: string, storage_path?: string, content: string} | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    async function loadFiles() {
-      try {
-        const data = await apiFetch('/sync/metadata');
-        // Map backend response to FileRecord format
-        const mappedFiles = data.map((f: any, idx: number) => ({
-          id: f.id || f.hash || idx,
-          file_path: f.file_path,
-          size_bytes: f.size_bytes,
-          updated_at: new Date().toLocaleString(), // Backend doesn't provide updated_at yet
-          upload_status: 'complete',
-          is_conflict_copy: f.file_path.includes('(Conflicted copy)'),
-          storage_path: f.storage_path,
-        }));
-        setFiles(mappedFiles);
-      } catch (err: any) {
-        console.error('Failed to fetch files:', err);
-        setError('Failed to load files. Backend may be unreachable.');
-        // Ensure files are empty on error
-        setFiles([]);
-      } finally {
-        setLoading(false);
-      }
+  const refreshFiles = useCallback(async () => {
+    try {
+      const data = await apiFetch('/sync/metadata');
+      console.log("Received metadata:", data);
+      // Map backend response to FileRecord format
+      const mappedFiles = data.map((f: any, idx: number) => ({
+        id: f.id || f.hash || idx,
+        file_path: f.file_path,
+        size_bytes: f.size_bytes,
+        updated_at: new Date().toLocaleString(), // Backend doesn't provide updated_at yet
+        upload_status: f.upload_status || 'complete',
+        is_conflict_copy: f.file_path.includes('(Conflicted copy)'),
+        storage_path: f.storage_path,
+      }));
+      setFiles(mappedFiles);
+    } catch (err: any) {
+      console.error('Failed to fetch files:', err);
+      setError('Failed to load files. Backend may be unreachable.');
+      // Ensure files are empty on error
+      setFiles([]);
+    } finally {
+      setLoading(false);
     }
-    loadFiles();
   }, []);
+
+  useEventStream((event) => {
+    switch (event.type) {
+      case 'file_created':
+      case 'file_updated':
+      case 'file_deleted':
+      case 'upload_processing':
+      case 'upload_complete':
+      case 'conflict_detected':
+        refreshFiles();
+        break;
+      case 'upload_failed':
+        refreshFiles();
+        // Optionally show a toast notification
+        break;
+    }
+  });
+
+  useEffect(() => {
+    refreshFiles();
+  }, [refreshFiles]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -111,6 +132,10 @@ export default function FileExplorer() {
   };
 
   const handleRowClick = async (e: React.MouseEvent, file: FileRecord) => {
+    if (file.is_conflict_copy || file.file_path.includes('(Conflicted copy)')) {
+      navigate('/conflicts');
+      return;
+    }
     if (isTextFile(file.file_path)) {
       try {
         const res = await fetch(`http://127.0.0.1:8001/api/download?file_path=${encodeURIComponent(file.file_path)}`);
@@ -146,13 +171,14 @@ export default function FileExplorer() {
   };
 
   const getStatusDot = (status: UploadStatus, isConflict?: boolean) => {
-    if (isConflict) return <div className="status-dot conflict w-2 h-2 rounded-full bg-red-500 animate-pulse" title="Conflict"></div>;
+    if (isConflict) return <div className="text-red-500" title="Conflict"><span className="material-symbols-outlined text-sm">warning</span></div>;
     switch (status) {
-      case 'complete': return <div className="status-dot synced w-2 h-2 rounded-full bg-primary animate-pulse-emerald" title="Synced"></div>;
+      case 'complete': return <div className="text-primary" title="Synced"><span className="material-symbols-outlined text-sm">check_circle</span></div>;
       case 'uploading': 
-      case 'processing': return <div className="status-dot syncing w-2 h-2 rounded-full bg-yellow-500 animate-pulse" title="Syncing"></div>;
-      case 'failed': return <div className="status-dot w-2 h-2 rounded-full bg-red-500" title="Failed"></div>;
-      default: return <div className="status-dot w-2 h-2 rounded-full bg-gray-500" title="Pending"></div>;
+      case 'processing': 
+      case 'pending': return <div className="text-yellow-500 flex items-center" title={status.charAt(0).toUpperCase() + status.slice(1)}><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span></div>;
+      case 'failed': return <div className="text-red-500 flex items-center" title="Failed"><span className="material-symbols-outlined text-sm">error</span></div>;
+      default: return <div className="status-dot w-2 h-2 rounded-full bg-gray-500" title="Unknown"></div>;
     }
   };
 
@@ -343,27 +369,18 @@ export default function FileExplorer() {
                 className="bg-primary text-surface-container-lowest font-label-md text-label-md py-2 px-6 rounded font-bold hover:bg-primary-container transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer disabled:opacity-50"
                 onClick={async () => {
                   setIsSaving(true);
+                  setSaveError(null);
                   try {
                     const blob = new Blob([editingFile.content], { type: 'text/plain' });
                     const fileObj = new File([blob], editingFile.name, { type: 'text/plain' });
                     await uploadFile(fileObj, editingFile.name);
                     
                     // Refresh files
-                    const data = await apiFetch('/sync/metadata');
-                    const mappedFiles = data.map((f: any, idx: number) => ({
-                      id: f.id || f.hash || idx,
-                      file_path: f.file_path,
-                      size_bytes: f.size_bytes,
-                      updated_at: new Date().toLocaleString(),
-                      upload_status: 'complete',
-                      is_conflict_copy: f.file_path.includes('(Conflicted copy)'),
-                      storage_path: f.storage_path,
-                    }));
-                    setFiles(mappedFiles);
+                    await refreshFiles();
                     setEditingFile(null);
                   } catch (err) {
                     console.error("Failed to save file", err);
-                    alert("Failed to save changes.");
+                    setSaveError("Failed to save changes. Network error.");
                   } finally {
                     setIsSaving(false);
                   }
@@ -373,6 +390,7 @@ export default function FileExplorer() {
                 {isSaving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
+            {saveError && <div className="text-red-500 font-code-sm mt-2">{saveError}</div>}
           </div>
         </div>
       )}

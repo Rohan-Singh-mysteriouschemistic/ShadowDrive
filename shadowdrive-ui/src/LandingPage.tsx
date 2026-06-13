@@ -180,14 +180,19 @@ export default function LandingPage() {
       {/* Content Wrapper */}
       <div style={{ position: 'relative', zIndex: 10 }} className="flex flex-col min-h-screen">
 
-        {/* Desktop Nav */}
-        <header className="fixed top-0 w-full z-50 justify-between items-center px-8 md:px-12 h-20 bg-background/40 backdrop-blur-md border-b border-white/5 hidden md:flex reveal-up is-visible" style={{ transitionDelay: '100ms' }}>
-          <div className="flex items-center gap-6">
-            <span className="text-2xl font-bold text-primary tracking-tighter" style={{ fontFamily: 'Geist, sans-serif' }}>ShadowDrive</span>
+        {/* Header */}
+        <header className="fixed top-0 w-full z-50 flex justify-between items-center px-8 md:px-12 py-8 hidden md:flex reveal-up is-visible" style={{ animationDelay: '0.1s' }}>
+          <div className="flex items-center gap-2 cursor-pointer">
+            <span className="font-display-lg text-[22px] font-bold text-white tracking-tight">ShadowDrive.</span>
           </div>
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate('/auth')} className="text-sm border border-primary/30 bg-primary/10 text-primary px-8 py-2 rounded hover:bg-primary hover:text-on-primary transition-all duration-300 shadow-[0_0_15px_rgba(16,185,129,0.15)]" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Login/Sign-up</button>
-          </div>
+          <nav className="flex items-center gap-8">
+            <button 
+              onClick={() => navigate('/auth')} 
+              className="text-[13px] font-bold tracking-widest uppercase text-white/70 hover:text-white transition-colors duration-200"
+            >
+              Login
+            </button>
+          </nav>
         </header>
 
         {/* Mobile Nav */}
@@ -199,42 +204,50 @@ export default function LandingPage() {
         </header>
 
         {/* Main */}
-        <main className="flex-grow pt-28 md:pt-36 w-full max-w-[1440px] mx-auto relative px-4 md:px-12">
+        <main className="flex-grow pt-24 w-full max-w-[1440px] mx-auto relative px-4 md:px-12">
 
           {/* Hero */}
-          <section className="relative py-20 lg:py-32 flex flex-col items-center text-center max-w-4xl mx-auto z-10">
-            <div className="reveal-up is-visible" style={{ transitionDelay: '200ms' }}>
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/20 bg-primary/5 text-primary text-xs mb-8 backdrop-blur-sm" style={{ fontFamily: 'JetBrains Mono, monospace', boxShadow: '0 0 15px rgba(16,185,129,0.1)' }}>
-                <span className="w-2 h-2 rounded-full bg-primary animate-pulse-emerald"></span>
-                System Status: Operational
+          <section className="relative pt-12 pb-20 lg:pt-16 lg:pb-32 flex flex-col items-start text-left max-w-[800px] z-10">
+            
+            {/* Liquid Glass Card (from demo) */}
+            <div className="reveal-up is-visible liquid-glass w-[210px] h-[210px] rounded-2xl p-5 flex flex-col justify-between mb-8 cursor-pointer tilt-card z-20" style={{
+              transitionDelay: '100ms'
+            }}>
+              <div className="text-[11px] font-medium text-white/50 tracking-widest" style={{ fontFamily: 'Geist, sans-serif' }}>
+                [ NODE_ACTIVE ]
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-[15px] leading-[1.2] font-medium text-on-surface" style={{ fontFamily: 'Geist, sans-serif' }}>
+                  Decentralized <span className="italic font-normal text-[19px] text-primary block mt-0.5">P2P Sync</span>
+                </h3>
+                <p className="text-[10.5px] text-on-surface-variant leading-relaxed" style={{ fontFamily: 'Geist, sans-serif' }}>
+                  Cryptographically secure, zero-trust data replication.
+                </p>
               </div>
             </div>
-            <h1 className="reveal-up is-visible emerald-text-glow mb-6" style={{
+            
+            <h1 className="reveal-up is-visible emerald-text-glow mb-6 uppercase tracking-tight" style={{
               fontFamily: 'Geist, sans-serif',
-              fontSize: '56px', lineHeight: '1.1', letterSpacing: '-0.03em', fontWeight: 700,
+              fontSize: '56px', lineHeight: '1.05', fontWeight: 800,
               transitionDelay: '300ms'
             }}>
-              Synchronization, Perfected.
+              SYNCHRONIZATION,<br/>PERFECTED<span className="text-primary">.</span>
             </h1>
-            <p className="reveal-up is-visible text-on-surface-variant mb-12 max-w-2xl mx-auto" style={{
-              fontFamily: 'Geist, sans-serif', fontSize: '18px', lineHeight: '1.6',
+            
+            <p className="reveal-up is-visible text-on-surface-variant mb-10 max-w-[600px]" style={{
+              fontFamily: 'Geist, sans-serif', fontSize: '16px', lineHeight: '1.6',
               transitionDelay: '400ms'
             }}>
-              A production-grade distributed file system. Zero conflicts. Absolute truth.
+              A production-grade distributed file system. Zero conflicts. Absolute truth. Secure your data with our robust architecture built to ensure high availability and seamless synchronization across your entire network.
             </p>
-            <div className="reveal-up is-visible flex flex-col sm:flex-row gap-6 justify-center w-full sm:w-auto" style={{ transitionDelay: '500ms' }}>
-              <button onClick={() => navigate('/auth?mode=deploy')} className="text-sm border border-primary/30 bg-primary/10 text-primary px-8 py-4 rounded flex items-center justify-center gap-2 hover:bg-primary hover:text-on-primary transition-all duration-300 transform hover:-translate-y-1 shadow-[0_0_15px_rgba(16,185,129,0.15)]" style={{
-                fontFamily: 'JetBrains Mono, monospace'
-              }}>
-                <span className="material-symbols-outlined" style={{ fontVariationSettings: '"FILL" 1' }}>dns</span>
-                Deploy Node
-              </button>
-              <button onClick={() => navigate('/auth')} className="text-sm bg-primary text-on-primary px-8 py-4 rounded flex items-center justify-center gap-2 hover:bg-primary-fixed transition-all duration-300 transform hover:-translate-y-1" style={{
-                fontFamily: 'JetBrains Mono, monospace',
-                boxShadow: '0 0 20px rgba(16,185,129,0.3)'
-              }}>
-                <span className="material-symbols-outlined" style={{ fontVariationSettings: '"FILL" 1' }}>terminal</span>
-                Access Web Vault
+            
+            <div className="flex flex-col sm:flex-row gap-6 items-start reveal-up is-visible" style={{ animationDelay: '400ms' }}>
+              <button 
+                onClick={() => navigate('/auth?mode=deploy')} 
+                className="flex items-center justify-center gap-3 bg-primary text-on-primary rounded-full px-8 py-4 font-bold uppercase tracking-wide hover:opacity-90 transition-opacity duration-200 group"
+              >
+                Get Started
+                <span className="material-symbols-outlined text-[20px] group-hover:translate-x-1 transition-transform duration-300">arrow_forward</span>
               </button>
             </div>
           </section>
