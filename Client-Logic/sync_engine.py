@@ -8,6 +8,7 @@ import sqlite3
 import os
 import threading
 import queue
+from typing import Optional
 from dataclasses import dataclass, field
 
 import network_client
@@ -349,7 +350,7 @@ def _mark_synced_db(event_id: int):
 
 # ─── WEEK 6/7 DOWNLOAD PIPELINE logic + Phase 1 Delta Download ──────────────
 
-def _get_device_id() -> int | None:
+def _get_device_id() -> Optional[int]:
     """Gets device_id from settings table."""
     try:
         conn = sqlite3.connect(config.DB_PATH, timeout=30.0)

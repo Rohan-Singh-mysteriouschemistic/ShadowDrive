@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # The Database (PostgreSQL)
   db:
-    image: postgres:15
+    image: asia-south2-docker.pkg.dev/lyrical-shore-450913-u3/shadowdrive/postgres:15
     container_name: shadow_db
     environment:
       POSTGRES_USER: user
@@ -16,7 +16,7 @@ services:
 
   # The Storage (MinIO)
   minio:
-    image: minio/minio
+    image: asia-south2-docker.pkg.dev/lyrical-shore-450913-u3/shadowdrive/minio:latest
     container_name: shadow_minio
     command: server /data --console-address ":9001"
     environment:
@@ -30,7 +30,7 @@ services:
 
   # The Job Queue (Redis) — Week 8
   redis:
-    image: redis:7-alpine
+    image: asia-south2-docker.pkg.dev/lyrical-shore-450913-u3/shadowdrive/redis:7-alpine
     container_name: shadow_redis
     ports:
       - "6379:6379"

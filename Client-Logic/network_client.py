@@ -6,6 +6,7 @@ Handles bidirectional payload transfers with Shabd's backend API.
 import os
 import logging
 import sqlite3
+from typing import Optional
 import requests
 import config
 import resilient_http
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Settings Database Helpers ───────────────────────────────────────────────
 
-def _get_setting(key: str) -> str | None:
+def _get_setting(key: str) -> Optional[str]:
     """Reads a value from the settings table in SQLite shadow.db."""
     if not os.path.exists(config.DB_PATH):
         return None
@@ -46,7 +47,7 @@ def _save_setting(key: str, value: str):
         logger.error("Failed to save setting '%s': %s", key, e)
 
 
-def _get_token() -> str | None:
+def _get_token() -> Optional[str]:
     """Reads jwt_token from settings."""
     return _get_setting("jwt_token")
 

@@ -2,6 +2,7 @@ import bcrypt
 import jwt
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from passlib.context import CryptContext
 
 # CryptContext for passlib bcrypt hashing
@@ -27,7 +28,7 @@ def verify(plain_password: str, hashed_password: str) -> bool:
         except Exception:
             return False
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Generate a signed JWT access token."""
     to_encode = data.copy()
     if expires_delta:

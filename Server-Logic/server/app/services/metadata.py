@@ -15,6 +15,7 @@ import os
 import logging
 from datetime import datetime, timezone
 import asyncio
+from typing import Union, Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -176,7 +177,7 @@ def _check_hash_dedup(
     db: Session,
     file_record: models.File,
     incoming_hash: str,
-) -> schemas.MetadataResponse | None:
+) -> Optional[schemas.MetadataResponse]:
     """Return a response if the server already knows this hash, else None.
 
     Handles two sub-cases:
@@ -267,7 +268,7 @@ def _handle_conflict_if_any(
     file_record: models.File,
     payload: schemas.MetadataAnnounce,
     incoming_hash: str,
-) -> schemas.MetadataResponse | None:
+) -> Optional[schemas.MetadataResponse]:
     """Detect split-brain conflicts and resolve via Last-Write-Wins.
 
     Returns a ``MetadataResponse`` when a conflict is found and resolved,
@@ -537,7 +538,7 @@ def _accept_new_version(
     )
 
 
-def reconcile_version_chunks(db: Session, version_record: models.Version, chunk_hashes: list[str] | None, user_id: int) -> list[int]:
+def reconcile_version_chunks(db: Session, version_record: models.Version, chunk_hashes: Optional[list[str]], user_id: int) -> list[int]:
     """
     Reconcile the announced chunk hashes for a new version.
     1. Check which chunk hashes exist in `stored_chunks`.
