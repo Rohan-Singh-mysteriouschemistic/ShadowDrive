@@ -54,4 +54,4 @@ venv/
 .agents/
 .claude/
 .github/
-_bmad/
+_bmad/\n.gemini/
