@@ -12,7 +12,6 @@ from watchdog.events import FileSystemEventHandler
 
 import config
 from diff_engine import process_single_file, run_full_scan
-from sync_engine import start_sync_loop 
 
 DEBOUNCE_DELAY = 2.0
 
@@ -43,25 +42,75 @@ def is_suppressed(path: str) -> bool:
             return False
         return True
 
+
+class DebounceScheduler(threading.Thread):
+    """
+    A single-threaded scheduler that manages debouncing of filesystem events,
+    completely replacing the resource-heavy threading.Timer (OS thread per event) model.
+    """
+    def __init__(self):
+        super().__init__(daemon=True, name="watcher-debounce-scheduler")
+        self._events = {}
+        self._lock = threading.Lock()
+        self._wakeup = threading.Event()
+        self._running = True
+
+    def schedule(self, path: str, event_type: str, delay: float = 2.0):
+        normalized = os.path.normpath(path)
+        fire_time = time.time() + delay
+        with self._lock:
+            self._events[normalized] = (fire_time, event_type)
+        self._wakeup.set()
+
+    def cancel(self, path: str):
+        normalized = os.path.normpath(path)
+        with self._lock:
+            self._events.pop(normalized, None)
+
+    def stop(self):
+        self._running = False
+        self._wakeup.set()
+
+    def run(self):
+        while self._running:
+            now = time.time()
+            next_wake = None
+            events_to_fire = []
+            
+            with self._lock:
+                for path, (fire_time, event_type) in list(self._events.items()):
+                    if now >= fire_time:
+                        events_to_fire.append((path, event_type))
+                        self._events.pop(path)
+                    else:
+                        if next_wake is None or fire_time < next_wake:
+                            next_wake = fire_time
+            
+            # Fire any events that are due
+            for path, event_type in events_to_fire:
+                try:
+                    process_single_file(path, event_type)
+                except Exception as e:
+                    print(f"[WATCHER ERROR] Error processing event for {path}: {e}")
+            
+            # Sleep until the next event is due, or until nudged
+            if next_wake is not None:
+                sleep_time = max(0.01, next_wake - time.time())
+                self._wakeup.wait(timeout=sleep_time)
+            else:
+                self._wakeup.wait()
+                
+            self._wakeup.clear()
+
+
 class WatcherHandler(FileSystemEventHandler):
     def __init__(self):
         super().__init__()
-        self._timers = {}
-        self._lock = threading.Lock()
+        self._scheduler = DebounceScheduler()
+        self._scheduler.start()
 
     def _schedule(self, event_type, path):
-        with self._lock:
-            existing = self._timers.get(path)
-            if existing:
-                existing.cancel()
-            timer = threading.Timer(DEBOUNCE_DELAY, self._fire, args=(event_type, path))
-            self._timers[path] = timer
-            timer.start()
-
-    def _fire(self, event_type, path):
-        with self._lock:
-            self._timers.pop(path, None)
-        process_single_file(path, event_type)
+        self._scheduler.schedule(path, event_type, DEBOUNCE_DELAY)
 
     def on_created(self, event):
         if not event.is_directory: 
@@ -79,24 +128,35 @@ class WatcherHandler(FileSystemEventHandler):
         if not event.is_directory:
             if is_suppressed(event.src_path):
                 return
-            with self._lock:
-                timer = self._timers.pop(event.src_path, None)
-                if timer: 
-                    timer.cancel()
+            self._scheduler.cancel(event.src_path)
             process_single_file(event.src_path, "deleted")
 
     def on_moved(self, event):
         if not event.is_directory:
             if is_suppressed(event.src_path) or is_suppressed(event.dest_path):
                 return
-            with self._lock:
-                timer = self._timers.pop(event.src_path, None)
-                if timer: 
-                    timer.cancel()
+            self._scheduler.cancel(event.src_path)
             process_single_file(event.src_path, "deleted")
             self._schedule("created", event.dest_path)
 
+
+_observer = None
+_event_handler = None
+
+def stop():
+    global _observer, _event_handler
+    print("[WATCHER] Stopping filesystem observer...")
+    if _event_handler and _event_handler._scheduler:
+        _event_handler._scheduler.stop()
+    if _observer:
+        _observer.stop()
+        try:
+            _observer.join(timeout=3.0)
+        except Exception:
+            pass
+
 def main():
+    global _observer, _event_handler
     # Coerce setup strings back into Path abstractions safely
     watch_path = Path(config.WATCH_DIR)
     watch_path.mkdir(parents=True, exist_ok=True)
@@ -105,14 +165,16 @@ def main():
     print("  ShadowDrive++ Client Agent (Week 6 Deployment)")
     print("=" * 50)
 
-    print("[STARTUP] Running system structural file-tree scan...")
-    run_full_scan()
+    # Phase 2: Shift bootstrapping full scan to a background thread to prevent startup freezes
+    print("[STARTUP] Spawning system structural file-tree scan in background...")
+    scan_thread = threading.Thread(target=run_full_scan, daemon=True, name="BootstrapScanner")
+    scan_thread.start()
     
     # Sync Core Daemon is now spawned by local_api.py to avoid duplicate runs
-    event_handler = WatcherHandler()
-    observer = Observer()
-    observer.schedule(event_handler, str(watch_path), recursive=True)
-    observer.start()
+    _event_handler = WatcherHandler()
+    _observer = Observer()
+    _observer.schedule(_event_handler, str(watch_path), recursive=True)
+    _observer.start()
     print(f"[STARTUP] Watcher active on resource path target: {watch_path}")
 
     try:
@@ -120,8 +182,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n[SHUTDOWN] Interrupted captured. Stopping worker handlers cleanly.")
-        observer.stop()
-    observer.join()
+        stop()
 
 if __name__ == "__main__":
     main()

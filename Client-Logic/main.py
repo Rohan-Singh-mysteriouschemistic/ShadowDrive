@@ -126,6 +126,8 @@ def run_register():
 # ─── Main Entry ──────────────────────────────────────────────────────────────
 
 def main():
+    import logging_setup
+    logging_setup.setup_logging()
     if len(sys.argv) > 1:
         command = sys.argv[1].lower()
         if command == "login":

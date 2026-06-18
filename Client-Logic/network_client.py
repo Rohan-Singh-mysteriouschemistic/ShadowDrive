@@ -16,31 +16,88 @@ logger = logging.getLogger(__name__)
 
 # ─── Settings Database Helpers ───────────────────────────────────────────────
 
+# ─── Settings Cache & Encryption ──────────────────────────────────────────────
+
+import sys
+import threading
+
+_settings_cache = {}
+_settings_cache_lock = threading.Lock()
+_settings_loaded = False
+_refresh_lock = threading.RLock()
+
+
+def _encrypt_val(key: str, val: str) -> str:
+    """Encrypt sensitive values using Windows DPAPI if running on Windows."""
+    if key == "encryption_key" and sys.platform == "win32":
+        try:
+            import win32crypt
+            encrypted_bytes = win32crypt.CryptProtectData(val.encode('utf-8'), "ShadowDriveKey", None, None, None, 0)
+            return "dpapi:" + encrypted_bytes.hex()
+        except Exception as e:
+            logger.error("DPAPI encryption failed for '%s': %s", key, e)
+            return val
+    return val
+
+
+def _decrypt_val(key: str, val: str) -> str:
+    """Decrypt sensitive values using Windows DPAPI if running on Windows."""
+    if key == "encryption_key" and val and val.startswith("dpapi:"):
+        if sys.platform == "win32":
+            try:
+                import win32crypt
+                raw_hex = val[len("dpapi:"):]
+                encrypted_bytes = bytes.fromhex(raw_hex)
+                desc, decrypted_bytes = win32crypt.CryptUnprotectData(encrypted_bytes, None, None, None, 0)
+                return decrypted_bytes.decode('utf-8')
+            except Exception as e:
+                logger.error("DPAPI decryption failed for '%s': %s", key, e)
+                return val
+    return val
+
+
+def _load_settings_cache_if_needed():
+    """Helper to populate the settings cache from SQLite."""
+    global _settings_loaded
+    if not _settings_loaded:
+        with _settings_cache_lock:
+            if not _settings_loaded:
+                if os.path.exists(config.DB_PATH):
+                    try:
+                        conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
+                        cur = conn.cursor()
+                        cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                        cur.execute("SELECT key, value FROM settings")
+                        for k, v in cur.fetchall():
+                            v = _decrypt_val(k, v)
+                            _settings_cache[k] = v
+                        conn.close()
+                    except Exception as e:
+                        logger.error("Failed to preload settings cache: %s", e)
+                _settings_loaded = True
+
+
 def _get_setting(key: str) -> Optional[str]:
-    """Reads a value from the settings table in SQLite shadow.db."""
-    if not os.path.exists(config.DB_PATH):
-        return None
-    try:
-        conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
-        cur = conn.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
-        row = cur.fetchone()
-        conn.close()
-        if row:
-            return row[0]
-    except Exception as e:
-        logger.error("Failed to read setting '%s': %s", key, e)
-    return None
+    """Reads a value from the settings cache, preloading if needed."""
+    _load_settings_cache_if_needed()
+    with _settings_cache_lock:
+        return _settings_cache.get(key)
 
 
 def _save_setting(key: str, value: str):
-    """Saves a key/value pair to the settings table in SQLite shadow.db."""
+    """Saves a key/value pair to the cache and the local SQLite settings table."""
+    _load_settings_cache_if_needed()
+    
+    with _settings_cache_lock:
+        _settings_cache[key] = value
+        
+    db_value = _encrypt_val(key, value)
+    
     try:
         conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, db_value))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -56,8 +113,12 @@ def _save_token(token: str):
     """Saves jwt_token to settings."""
     _save_setting("jwt_token", token)
 
+
 def _clear_device():
     """Clears the old device_id on login to prevent 403 Forbidden cross-user conflicts."""
+    _load_settings_cache_if_needed()
+    with _settings_cache_lock:
+        _settings_cache.pop("device_id", None)
     try:
         conn = sqlite3.connect(config.DB_PATH)
         cur = conn.cursor()
@@ -81,31 +142,37 @@ def _request(method: str, endpoint: str, **kwargs) -> requests.Response:
     resp = resilient_http.request(method, url, **kwargs)
 
     if resp.status_code == 401 and endpoint != "/auth/refresh":
-        # Attempt to refresh the token
-        old_token = _get_token()
-        if old_token:
-            refresh_headers = {"Authorization": f"Bearer {old_token}"}
-            refresh_resp = resilient_http.request(
-                "POST", 
-                f"{config.SERVER_BASE_URL}/auth/refresh", 
-                headers=refresh_headers
-            )
-            if refresh_resp.status_code == 200:
-                new_token = refresh_resp.json().get("access_token")
-                if new_token:
-                    _save_token(new_token)
-                    # Update config state
-                    config.sync_suspended = False
-                    # Retry the original request
-                    headers["Authorization"] = f"Bearer {new_token}"
-                    kwargs["headers"] = headers
-                    return resilient_http.request(method, url, **kwargs)
+        with _refresh_lock:
+            # Check if token was already refreshed by another thread
+            current_token = _get_token()
+            if current_token != token:
+                headers["Authorization"] = f"Bearer {current_token}"
+                kwargs["headers"] = headers
+                return resilient_http.request(method, url, **kwargs)
+
+            # Attempt to refresh the token
+            if current_token:
+                refresh_headers = {"Authorization": f"Bearer {current_token}"}
+                refresh_resp = resilient_http.request(
+                    "POST", 
+                    f"{config.SERVER_BASE_URL}/auth/refresh", 
+                    headers=refresh_headers
+                )
+                if refresh_resp.status_code == 200:
+                    new_token = refresh_resp.json().get("access_token")
+                    if new_token:
+                        _save_token(new_token)
+                        config.sync_suspended = False
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        kwargs["headers"] = headers
+                        return resilient_http.request(method, url, **kwargs)
         
         # If refresh fails or no token, suspend sync
         print("[AUTH ERROR] Unauthorized (401) and refresh failed. Sync has been suspended. Please login again.")
         config.sync_suspended = True
 
     return resp
+
 
 
 # ─── User Management / CLI Auth API ──────────────────────────────────────────

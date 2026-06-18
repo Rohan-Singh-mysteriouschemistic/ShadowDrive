@@ -100,6 +100,11 @@ class CircuitBreaker:
         return False  # OPEN — reject
 
 
+class CircuitBreakerOpen(requests.exceptions.RequestException):
+    """Exception raised when the circuit breaker is OPEN to fail fast."""
+    pass
+
+
 # ── Module-level singletons ──────────────────────────────────────────────────
 _default_policy = RetryPolicy()
 _circuit = CircuitBreaker()
@@ -112,7 +117,11 @@ def _get_session() -> requests.Session:
     if _session is None:
         _session = requests.Session()
         _session.headers.update({"User-Agent": "ShadowDrive-Agent/1.0"})
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=100)
+        _session.mount("http://", adapter)
+        _session.mount("https://", adapter)
     return _session
+
 
 
 def request(
@@ -148,10 +157,8 @@ def request(
     for attempt in range(1, p.max_retries + 1):
         # Circuit breaker check
         if not _circuit.allow_request():
-            delay = _circuit.recovery_timeout - (time.time() - _circuit._last_failure_time)
-            if delay > 0:
-                logger.info("[CIRCUIT] Open. Waiting %.1fs before probe.", delay)
-                time.sleep(delay)
+            logger.warning("[CIRCUIT] Open. Failing fast for %s %s.", method, url)
+            raise CircuitBreakerOpen("Circuit breaker is OPEN. Server is unreachable.", request=None, response=None)
 
         try:
             response = session.request(method, url, **kwargs)

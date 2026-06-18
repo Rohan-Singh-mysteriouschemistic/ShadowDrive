@@ -81,13 +81,6 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   }
 }
 
-async function calculateSHA256(file: File): Promise<string> {
-  const arrayBuffer = await file.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 export async function uploadFile(file: File, remotePath: string) {
   const formData = new FormData();
   // Pass the file so the local API can drop it in the watch_folder

@@ -50,7 +50,7 @@ def listen():
         url = f"{config.SERVER_BASE_URL}/events/stream?token={token}"
         try:
             logger.info("[SSE] Connecting to %s", url)
-            with requests.get(url, stream=True, timeout=(10, None)) as resp:
+            with requests.get(url, stream=True, timeout=(10, 45)) as resp:
                 resp.raise_for_status()
                 backoff = 1  # Reset on successful connection
 

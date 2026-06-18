@@ -58,4 +58,32 @@ def chunk_and_hash_file(file_path: str) -> list[str]:
                 hashes.append(sha)
         return hashes
     except OSError:
-        return []
+        return []
+
+
+def compute_file_and_chunk_hashes(file_path: str, chunk_size: int) -> tuple[str, list[str]]:
+    """
+    Compute overall file SHA256 and chunk-level SHA256 hashes in a single pass.
+    Handles empty/0-byte files consistently with previous implementations.
+    """
+    try:
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            return EMPTY_FILE_SHA256, [EMPTY_FILE_SHA256]
+    except OSError:
+        return EMPTY_FILE_SHA256, [EMPTY_FILE_SHA256]
+
+    file_sha = hashlib.sha256()
+    chunk_hashes = []
+    
+    try:
+        with open(file_path, "rb") as f:
+            while True:
+                data = f.read(chunk_size)
+                if not data:
+                    break
+                file_sha.update(data)
+                chunk_hashes.append(hashlib.sha256(data).hexdigest())
+        return file_sha.hexdigest(), chunk_hashes
+    except OSError:
+        return "", []
+
