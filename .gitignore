@@ -10,11 +10,19 @@ env/
 # Environment Variables (Secrets!)
 .env
 .env.local
+_bmad
+.agent
+.gemini
 
 # Database files (Don't upload your local DB)
 *.sqlite3
 postgres_data/
 minio_data/
+.obsidian
+Project_Knowledge.txt
+skills-lock.json
+
+
 
 # OS Junk
 .DS_Store
@@ -22,6 +30,10 @@ Thumbs.db
 
 # Ignore personal study documentation
 docs/
+project-journal
+.opencode
+.understand-anything
+AGENTS.md
 .code-review-graph/
 
 # Ignore temporary AI implementation logs
@@ -48,10 +60,12 @@ venv/
 
 # Logs
 *.log
-
 # Agent & AI generated folders
 .agent/
 .agents/
 .claude/
 .github/
-_bmad/\n.gemini/
+_bmad/
+.gemini/
+third_party/antigravity-awesome-skills/
+

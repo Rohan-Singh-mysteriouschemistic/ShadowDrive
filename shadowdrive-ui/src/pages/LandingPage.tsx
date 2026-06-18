@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -53,10 +52,10 @@ export default function LandingPage() {
     }, 150);
 
     // --- 3D Tilt Effect for Cards ---
-    const cards = document.querySelectorAll('.tilt-card');
-    const tiltHandlers = [];
+    const cards = document.querySelectorAll<HTMLElement>('.tilt-card');
+    const tiltHandlers: { card: HTMLElement; onMove: (e: MouseEvent) => void; onLeave: () => void }[] = [];
     cards.forEach((card) => {
-      const onMove = (e) => {
+      const onMove = (e: MouseEvent) => {
         const rect = card.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -75,7 +74,7 @@ export default function LandingPage() {
     });
 
     // --- Three.js Particle Constellation ---
-    let renderer = null;
+    let renderer: any = null;
     function initThreeJS() {
       const container = document.getElementById('canvas-container');
       if (!container) return;
@@ -107,7 +106,7 @@ export default function LandingPage() {
       let mouseX = 0, mouseY = 0;
       const halfX = window.innerWidth / 2;
       const halfY = window.innerHeight / 2;
-      const onMouseMove = (e) => {
+      const onMouseMove = (e: MouseEvent) => {
         mouseX = e.clientX - halfX;
         mouseY = e.clientY - halfY;
       };

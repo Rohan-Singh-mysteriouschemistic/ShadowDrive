@@ -17,11 +17,13 @@ single-server deployments.  For multi-server, swap in Redis Pub/Sub.
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
+import redis.asyncio as aioredis
 from ..dependencies import get_current_user
 from .. import models
 
@@ -90,6 +92,43 @@ async def publish_event(user_id: int, event_type: str, payload: dict):
             "Dropped SSE event for %d slow subscriber(s) of user_id=%d",
             dropped, user_id,
         )
+
+
+async def listen_to_redis(redis_url: str):
+    """Background task to bridge Redis Pub/Sub events to the SSE stream.
+    
+    This listener allows the RQ worker (running in a separate process)
+    to notify connected SSE clients when long-running jobs complete.
+    """
+    logger.info("[REDIS] Starting event bridge listener on %s", redis_url)
+    r = aioredis.from_url(redis_url, decode_responses=True)
+    pubsub = r.pubsub()
+    await pubsub.subscribe("shadowdrive:events")
+    
+    try:
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                try:
+                    payload = json.loads(message["data"])
+                    user_id = payload.get("user_id")
+                    event_type = payload.get("type")
+                    data = payload.get("data")
+                    
+                    if user_id and event_type:
+                        logger.info(
+                            "[REDIS] Forwarding %s to SSE for user_id=%d",
+                            event_type, user_id
+                        )
+                        await publish_event(user_id, event_type, data)
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning("[REDIS] Invalid message payload: %s", e)
+    except asyncio.CancelledError:
+        logger.info("[REDIS] Listener task cancelled.")
+    except Exception as e:
+        logger.error("[REDIS] Listener bridge encountered an error: %s", e)
+    finally:
+        await pubsub.unsubscribe("shadowdrive:events")
+        await r.aclose()
 
 
 # ── SSE Streaming Endpoint ──────────────────────────────────────────────────

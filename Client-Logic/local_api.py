@@ -16,11 +16,18 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins for local UI
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/api/auth/token")
+def get_token():
+    token = network_client._get_token()
+    if not token:
+        raise HTTPException(status_code=404, detail="No active session found.")
+    return {"access_token": token}
 
 class AuthRequest(BaseModel):
     email: str
