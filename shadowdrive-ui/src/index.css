@@ -167,6 +167,54 @@ body {
 }
 .animate-pulse-emerald { animation: pulse-emerald 2s infinite; }
 
+/* Auth input glow on focus */
+.input-glow:focus {
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+  border-color: var(--color-primary) !important;
+}
+
+/* Glass panel utility (was inline in 6+ components) */
+.glass-panel {
+  background-color: rgba(17, 17, 17, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-panel-darker {
+  background-color: rgba(17, 17, 17, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Page header pattern (was copy-pasted 6 times) */
+.page-header {
+  @apply h-20 border-b border-white/5 flex items-center justify-between px-margin-desktop shrink-0 z-10 border-l-0 border-r-0 border-t-0;
+  background-color: rgba(17, 17, 17, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Pulse dot for status indicators */
+@keyframes pulse-dot {
+  0% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(78, 222, 163, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0); }
+}
+.pulse-dot {
+  animation: pulse-dot 2s infinite;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* Scroll-reveal helpers (used by LandingPage) */
 .reveal-up {
   opacity: 0;
@@ -210,12 +258,6 @@ body {
   100% { transform: scale(1);   opacity: 0.5; }
 }
 .topology-icon { animation: topology-pulse 3s infinite; }
-
-/* Auth input glow on focus */
-.input-glow:focus {
-  box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
-  border-color: var(--color-primary) !important;
-}
 
 /* Liquid Glass utility (imported from ui-ux-pro-max guidelines) */
 .liquid-glass {

@@ -6,12 +6,91 @@ Handles bidirectional payload transfers with Shabd's backend API.
 import os
 import logging
 import sqlite3
+import json
 from typing import Optional
 import requests
 import config
 import resilient_http
 
 logger = logging.getLogger(__name__)
+
+try:
+    import keyring
+except ImportError:
+    keyring = None
+
+
+# ─── Secure local key storage helpers ────────────────────────────────────────
+
+def _get_secure_file_setting(key: str) -> Optional[str]:
+    filepath = os.path.expanduser("~/.config/shadowdrive/keys")
+    if not os.path.exists(filepath):
+        return None
+    try:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+        return data.get(key)
+    except Exception as e:
+        logger.error("Failed to read secure keys file: %s", e)
+        return None
+
+
+def _save_secure_file_setting(key: str, value: Optional[str]):
+    filepath = os.path.expanduser("~/.config/shadowdrive/keys")
+    dirpath = os.path.dirname(filepath)
+    try:
+        os.makedirs(dirpath, exist_ok=True)
+        data = {}
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
+        
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        mode = 0o600
+        fd = os.open(filepath, flags, mode)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+        os.chmod(filepath, 0o600)
+    except Exception as e:
+        logger.error("Failed to write secure keys file: %s", e)
+
+
+def _get_secure_setting(key: str) -> Optional[str]:
+    if keyring is not None:
+        try:
+            val = keyring.get_password("shadowdrive", key)
+            if val is not None:
+                return val
+        except Exception as e:
+            logger.debug("keyring.get_password failed for key '%s': %s", key, e)
+    return _get_secure_file_setting(key)
+
+
+def _save_secure_setting(key: str, value: Optional[str]):
+    saved_in_keyring = False
+    if keyring is not None:
+        try:
+            if value is None:
+                try:
+                    keyring.delete_password("shadowdrive", key)
+                except Exception:
+                    pass
+            else:
+                keyring.set_password("shadowdrive", key, value)
+            saved_in_keyring = True
+        except Exception as e:
+            logger.debug("keyring action failed for key '%s': %s", key, e)
+            
+    if not saved_in_keyring:
+        _save_secure_file_setting(key, value)
 
 
 # ─── Settings Database Helpers ───────────────────────────────────────────────
@@ -42,6 +121,8 @@ def _encrypt_val(key: str, val: str) -> str:
 
 def _decrypt_val(key: str, val: str) -> str:
     """Decrypt sensitive values using Windows DPAPI if running on Windows."""
+    if key in ("encryption_key", "jwt_token"):
+        return _get_secure_setting(key)
     if key == "encryption_key" and val and val.startswith("dpapi:"):
         if sys.platform == "win32":
             try:
@@ -93,6 +174,9 @@ def _save_setting(key: str, value: str):
         
     db_value = _encrypt_val(key, value)
     
+    if key in ("encryption_key", "jwt_token"):
+        _save_secure_setting(key, value)
+        return
     try:
         conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
         cur = conn.cursor()

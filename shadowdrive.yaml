@@ -1,0 +1,22 @@
+# shadowdrive.yaml — ShadowDrive Configuration
+# Location: ~/.config/shadowdrive/config.yaml
+
+server:
+  url: "http://localhost:8000"
+  api_key: ""
+
+client:
+  watch_folder: "~/ShadowDrive"
+  chunk_size_mb: 4
+  sync_interval_sec: 10
+  max_retries: 5
+  compression: "none"
+
+logging:
+  level: "INFO"
+  file: ""
+  json: false
+
+encryption:
+  algorithm: "AES-256-GCM"
+  pbkdf2_iterations: 100000

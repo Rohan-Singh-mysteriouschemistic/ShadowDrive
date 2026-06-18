@@ -28,6 +28,7 @@ Environment variables (same as the FastAPI server):
 
 import os
 import io
+import json
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -66,6 +67,30 @@ def _get_session():
     return _SessionFactory()
 
 
+def _notify_completion(version: Version, status_str: str):
+    """Publish a completion event to Redis for the SSE bridge.
+    
+    Args:
+        version:    The Version ORM object (must be attached to an active session).
+        status_str: 'complete' or 'failed'.
+    """
+    notification = {
+        "user_id": version.file.user_id,
+        "type": f"upload_{status_str}",
+        "data": {
+            "file_id": version.file_id,
+            "file_path": version.file.file_path,
+            "version_id": version.id,
+            "status": status_str,
+        }
+    }
+    redis_conn.publish("shadowdrive:events", json.dumps(notification))
+    logger.info(
+        "Published %s event to Redis for file='%s' (user_id=%d)",
+        notification["type"], version.file.file_path, version.file.user_id
+    )
+
+
 # ─── Background Tasks ────────────────────────────────────────────────────────
 
 def verify_file_hash(version_id: int, expected_hash: str) -> dict:
@@ -100,6 +125,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
             )
             version.upload_status = UploadStatus.failed
             db.commit()
+            _notify_completion(version, "failed")
             return {"status": "failed", "reason": f"minio_read_error: {e}"}
 
         actual_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -107,6 +133,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
         if actual_hash == expected_hash:
             version.upload_status = UploadStatus.complete
             db.commit()
+            _notify_completion(version, "complete")
             logger.info(
                 "verify_file_hash: version_id=%d PASSED (hash=%s, %d bytes)",
                 version_id, actual_hash, len(file_bytes)
@@ -120,6 +147,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
         else:
             version.upload_status = UploadStatus.failed
             db.commit()
+            _notify_completion(version, "failed")
             logger.warning(
                 "verify_file_hash: version_id=%d FAILED — "
                 "expected %s, got %s",
@@ -140,6 +168,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
             if version:
                 version.upload_status = UploadStatus.failed
                 db.commit()
+                _notify_completion(version, "failed")
         except Exception:
             db.rollback()
         logger.exception("verify_file_hash: unhandled error for version_id=%d", version_id)
@@ -186,6 +215,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         if not all_chunks:
             version.upload_status = UploadStatus.failed
             db.commit()
+            _notify_completion(version, "failed")
             return {"status": "failed", "reason": "no_chunks_found"}
 
         chunk_keys = [c.chunk_storage_key for c in all_chunks]
@@ -198,6 +228,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
             logger.error("assemble_and_verify: assembly failed: %s", e)
             version.upload_status = UploadStatus.failed
             db.commit()
+            _notify_completion(version, "failed")
             return {"status": "failed", "reason": f"assembly_error: {e}"}
 
         # Update version with final size
@@ -215,6 +246,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
             logger.error("assemble_and_verify: re-read failed: %s", e)
             version.upload_status = UploadStatus.failed
             db.commit()
+            _notify_completion(version, "failed")
             return {"status": "failed", "reason": f"verify_read_error: {e}"}
 
         actual_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -222,6 +254,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         if actual_hash == expected_hash:
             version.upload_status = UploadStatus.complete
             db.commit()
+            _notify_completion(version, "complete")
             logger.info(
                 "assemble_and_verify: version_id=%d PASSED "
                 "(%d chunks, %d bytes, hash=%s)",
@@ -237,6 +270,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         else:
             version.upload_status = UploadStatus.failed
             db.commit()
+            _notify_completion(version, "failed")
             logger.warning(
                 "assemble_and_verify: version_id=%d hash MISMATCH — "
                 "expected %s, got %s",
@@ -255,6 +289,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
             if version:
                 version.upload_status = UploadStatus.failed
                 db.commit()
+                _notify_completion(version, "failed")
         except Exception:
             db.rollback()
         logger.exception(

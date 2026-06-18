@@ -7,7 +7,9 @@ echo "=================================================="
 echo ""
 echo "[1/5] Starting Docker containers (PostgreSQL, MinIO & Redis)..."
 cd "Server-Logic/server" || exit
+source .venv/bin/activate
 docker-compose up -d
+
 
 echo ""
 echo "[2/5] Starting FastAPI Backend Server..."
@@ -32,14 +34,14 @@ echo ""
 echo "[3/5] Starting RQ Background Worker..."
 # Run the RQ worker in the background (or in a new terminal if supported)
 if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
-    start cmd //k "python -m rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker"
+    start cmd //k "rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker"
 elif command -v gnome-terminal &> /dev/null; then
-    gnome-terminal -- bash -c "python -m rq worker shadowdrive-jobs --with-scheduler; exec bash" &
+    gnome-terminal -- bash -c "rq worker shadowdrive-jobs --with-scheduler; exec bash" &
 elif command -v xterm &> /dev/null; then
-    xterm -e "python -m rq worker shadowdrive-jobs --with-scheduler" &
+    xterm -e "rq worker shadowdrive-jobs --with-scheduler" &
 else
     # Fallback to running in the background and logging
-    python -m rq worker shadowdrive-jobs --with-scheduler > worker.log 2>&1 &
+    rq worker shadowdrive-jobs --with-scheduler > worker.log 2>&1 &
     echo "Worker started in background (see worker.log)"
 fi
 

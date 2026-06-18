@@ -1,7 +1,8 @@
-from fastapi import status, HTTPException, Depends, APIRouter
+from fastapi import status, HTTPException, Depends, APIRouter, Request
 from sqlalchemy.orm import Session
 from .. import models, schemas, utils
 from ..database import get_db
+from .auth import rate_limiter
 
 router = APIRouter(
     prefix="/users",
@@ -10,7 +11,19 @@ router = APIRouter(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=schemas.UserOut)
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=schemas.UserOut)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+async def create_user(request: Request, user: schemas.UserCreate, db: Session = Depends(get_db)):
+    client_ip = request.headers.get("x-forwarded-for")
+    if client_ip:
+        client_ip = client_ip.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "127.0.0.1"
+
+    if not await rate_limiter.check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later."
+        )
+
     # Check username/email uniqueness
     existing = db.query(models.User).filter(
         (models.User.email == user.email) | (models.User.username == user.username)
@@ -36,7 +49,19 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login")
-def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
+async def login(request: Request, user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
+    client_ip = request.headers.get("x-forwarded-for")
+    if client_ip:
+        client_ip = client_ip.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "127.0.0.1"
+
+    if not await rate_limiter.check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later."
+        )
+
     user = db.query(models.User).filter(models.User.email == user_credentials.email).first()
 
     if not user:

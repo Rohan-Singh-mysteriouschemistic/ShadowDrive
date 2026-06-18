@@ -1,8 +1,9 @@
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 #username, password, hostname, DB
-SQLALCHEMY_DATABASE_URL = "postgresql://user:SDrive516477%23@localhost/shadowdrive"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:SDrive516477%23@localhost/shadowdrive")
 
 # ─── Engine Configuration (Week 4 Hardening) ─────────────────────────────────
 # pool_pre_ping=True: Before handing a connection to our code, SQLAlchemy

@@ -1,7 +1,25 @@
 export const BASE_URL = 'http://127.0.0.1:8000';
 
+let inMemoryToken: string | null = null;
+
 export function getToken(): string | null {
-  return localStorage.getItem('shadowdrive_token');
+  return inMemoryToken;
+}
+
+export function setToken(token: string | null) {
+  inMemoryToken = token;
+}
+
+async function fetchTokenFromServer(): Promise<void> {
+  try {
+    const response = await fetch('http://127.0.0.1:8001/api/auth/token');
+    if (response.ok) {
+      const data = await response.json();
+      inMemoryToken = data.access_token;
+    }
+  } catch (err) {
+    console.error('[Token fetch] Failed to fetch token from local client api', err);
+  }
 }
 
 /**
@@ -39,6 +57,10 @@ async function withRetry<T>(
 }
 
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
+  if (inMemoryToken === null) {
+    await fetchTokenFromServer();
+  }
+
   const doFetch = async () => {
     const token = getToken();
     const headers: Record<string, string> = {
@@ -67,7 +89,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
           
           if (refreshRes.ok) {
             const data = await refreshRes.json();
-            localStorage.setItem('shadowdrive_token', data.access_token);
+            inMemoryToken = data.access_token;
             // Retry the original request with the new token
             return await withRetry(doFetch);
           }

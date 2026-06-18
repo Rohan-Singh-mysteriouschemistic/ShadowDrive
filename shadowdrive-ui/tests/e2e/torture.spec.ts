@@ -2,9 +2,13 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Suite 3: UI Reactivity & Disconnects', () => {
   test('SSE Connection Drop and Recovery', async ({ page }) => {
-    // 1. Setup Auth
-    await page.addInitScript(() => {
-      window.localStorage.setItem('shadowdrive_token', 'mock_token');
+    // 1. Setup Auth by mocking local client API token endpoint
+    await page.route('**/api/auth/token', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ access_token: 'mock_token' }),
+      });
     });
 
     let sseFails = true;
