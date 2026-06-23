@@ -1,6 +1,0 @@
-[submodule "third_party/andrej-karpathy-skills"]
-	path = third_party/andrej-karpathy-skills
-	url = https://github.com/multica-ai/andrej-karpathy-skills.git
-[submodule "third_party/ui-ux-pro-max-skill"]
-	path = third_party/ui-ux-pro-max-skill
-	url = https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git
