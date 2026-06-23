@@ -27,6 +27,7 @@ skills-lock.json
 # OS Junk
 .DS_Store
 Thumbs.db
+tutorial
 
 # Ignore personal study documentation
 docs/

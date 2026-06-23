@@ -5,16 +5,6 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 #username, password, hostname, DB
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:SDrive516477%23@localhost/shadowdrive")
 
-# ─── Engine Configuration (Week 4 Hardening) ─────────────────────────────────
-# pool_pre_ping=True: Before handing a connection to our code, SQLAlchemy
-#   sends a lightweight "SELECT 1" to check if the connection is alive.
-#   If the database server restarted and killed our old connections, the
-#   stale connection is silently replaced. Without this, we get a
-#   "connection reset by peer" error on the first request after a restart.
-#
-# pool_recycle=1800: Connections older than 30 minutes are automatically
-#   replaced. This prevents "idle connection timeout" errors from PostgreSQL
-#   or network firewalls that kill long-idle TCP sockets.
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
