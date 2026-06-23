@@ -28,6 +28,14 @@ skills-lock.json
 .DS_Store
 Thumbs.db
 tutorial
+.gemini
+_bmad
+.understand-anything
+.opencode
+.obsidian
+project-journal
+AGENTS.md
+skills-lock.json
 
 # Ignore personal study documentation
 docs/
