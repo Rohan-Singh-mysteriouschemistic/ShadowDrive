@@ -11,6 +11,17 @@ export default defineConfig({
   server: {
     allowedHosts: [
       'baadal.tailb4fef9.ts.net'
-    ]
+    ],
+    proxy: {
+      '/api': {
+        target: 'http://client:8001',
+        changeOrigin: true,
+      },
+      '/server-api': {
+        target: 'http://api:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/server-api/, '')
+      }
+    }
   }
 })

@@ -28,6 +28,7 @@ from loguru import logger
 # The sync engine checks this flag at the top of its loop and, if set,
 # runs an immediate sync cycle instead of sleeping for 30 seconds.
 sync_nudge = threading.Event()
+_listener_thread = None
 
 
 def listen():
@@ -36,10 +37,11 @@ def listen():
     Reconnects with exponential backoff on failure.
     Never raises — all errors are caught and logged.
     """
+    global _listener_thread
     backoff = 1
     max_backoff = 60
 
-    while True:
+    while threading.current_thread() == _listener_thread:
         token = network_client._get_token()
         if not token:
             time.sleep(5)
@@ -53,6 +55,8 @@ def listen():
                 backoff = 1  # Reset on successful connection
 
                 for line in resp.iter_lines(decode_unicode=True):
+                    if threading.current_thread() != _listener_thread:
+                        break
                     if line.startswith("data: "):
                         data_str = line[6:]
                         try:
@@ -70,6 +74,8 @@ def listen():
                             pass
 
         except requests.exceptions.RequestException as e:
+            if threading.current_thread() != _listener_thread:
+                break
             logger.warning("[SSE] Connection failed: {}. Retrying in {}s", e, backoff)
 
         time.sleep(backoff)
@@ -78,6 +84,8 @@ def listen():
 
 def start():
     """Start the SSE listener as a daemon thread."""
+    global _listener_thread
     t = threading.Thread(target=listen, daemon=True, name="sse-listener")
+    _listener_thread = t
     t.start()
     logger.info("[SSE] Listener thread started.")

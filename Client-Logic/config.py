@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 
 class ServerConfig(BaseModel):
-    url: str = "http://localhost:8000"
+    url: str = Field(default_factory=lambda: os.getenv("SERVER_URL", "http://localhost:8000"))
     api_key: str = ""
 
 class ClientConfig(BaseModel):

@@ -19,14 +19,30 @@ from watchdog.observers import Observer
 _ignore_spec = None
 
 def _load_ignore_patterns():
-    """Load .shadowignore patterns from watch_folder root."""
+    """Load .shadowignore patterns.
+
+    Search order:
+      1. <WATCH_DIR>/.shadowignore  (user can place a per-folder override)
+      2. /app/.shadowignore          (mounted project root inside Docker container)
+      3. <app_dir>/.shadowignore    (fallback for native/dev installs)
+    """
     global _ignore_spec
-    ignore_file = os.path.join(config.WATCH_DIR, '.shadowignore')
-    if os.path.exists(ignore_file):
-        with open(ignore_file) as f:
-            _ignore_spec = pathspec.PathSpec.from_lines('gitwildmatch', f)
-    else:
-        _ignore_spec = None
+
+    # Candidate locations in priority order
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(config.WATCH_DIR, '.shadowignore'),
+        '/app/.shadowignore',
+        os.path.join(app_dir, '.shadowignore'),
+    ]
+
+    for ignore_file in candidates:
+        if os.path.exists(ignore_file):
+            with open(ignore_file) as f:
+                _ignore_spec = pathspec.PathSpec.from_lines('gitwildmatch', f)
+            return
+
+    _ignore_spec = None
 
 def is_ignored(path: str) -> bool:
     """Check if a path matches .shadowignore patterns."""
@@ -167,10 +183,12 @@ class WatcherHandler(FileSystemEventHandler):
 
 _observer = None
 _event_handler = None
+_running = False
 
 def stop():
-    global _observer, _event_handler
+    global _observer, _event_handler, _running
     logger.info("Stopping filesystem observer...")
+    _running = False
     if _event_handler and _event_handler._scheduler:
         _event_handler._scheduler.stop()
     if _observer:
@@ -181,7 +199,7 @@ def stop():
             pass
 
 def main():
-    global _observer, _event_handler
+    global _observer, _event_handler, _running
     # Coerce setup strings back into Path abstractions safely
     watch_path = Path(config.WATCH_DIR)
     watch_path.mkdir(parents=True, exist_ok=True)
@@ -204,8 +222,9 @@ def main():
     _observer.start()
     logger.info("Watcher active on resource path target: {}", watch_path)
 
+    _running = True
     try:
-        while True:
+        while _running:
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Interrupted captured. Stopping worker handlers cleanly.")

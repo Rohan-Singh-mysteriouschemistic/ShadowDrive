@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getToken, apiFetch, setToken, getOrFetchToken } from '../lib/api';
+import { getToken, apiFetch, setToken, getOrFetchToken, CLIENT_API_URL } from '../lib/api';
 import Badge from '../components/Badge';
 import Card from '../components/Card';
 
@@ -206,7 +206,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 onClick={async () => {
                   setShowConfirmLogout(false);
                   try {
-                    await fetch('http://127.0.0.1:8001/api/auth/logout', { method: 'POST' });
+                    await fetch(`${CLIENT_API_URL}/api/auth/logout`, { method: 'POST' });
                   } catch (e) {
                     console.error('Failed to notify local client of logout:', e);
                   }

@@ -1,4 +1,5 @@
-export let BASE_URL = 'http://127.0.0.1:8000';
+export let BASE_URL = import.meta.env?.VITE_API_URL || '/server-api';
+export const CLIENT_API_URL = import.meta.env?.VITE_CLIENT_API_URL || '';
 
 let configPromise: Promise<void> | null = null;
 
@@ -8,13 +9,12 @@ export function getOrFetchConfig(): Promise<void> {
   }
   configPromise = (async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8001/api/config');
+      const response = await fetch(`${CLIENT_API_URL}/api/config`);
       if (response.ok) {
-        const data = await response.json();
-        if (data.server_url) {
-          BASE_URL = data.server_url.endsWith('/') ? data.server_url.slice(0, -1) : data.server_url;
-          console.log('[API] Dynamically set BASE_URL to:', BASE_URL);
-        }
+        await response.json();
+        // We no longer override BASE_URL here because the client's internal Docker
+        // network URL (e.g. http://api:8000) won't be accessible from the browser.
+        console.log('[API] Client config loaded. Using BASE_URL:', BASE_URL);
       }
     } catch (err) {
       console.error('[API] Failed to fetch server config from local client api', err);
@@ -45,7 +45,7 @@ export async function getOrFetchToken(): Promise<string | null> {
   }
   tokenPromise = (async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8001/api/auth/token');
+      const response = await fetch(`${CLIENT_API_URL}/api/auth/token`);
       if (response.ok) {
         const data = await response.json();
         inMemoryToken = data.access_token;
@@ -144,7 +144,7 @@ export async function uploadFile(file: File, remotePath: string) {
   // Pass the file so the local API can drop it in the watch_folder
   formData.append('file', file, remotePath);
 
-  const response = await fetch(`http://127.0.0.1:8001/api/upload`, {
+  const response = await fetch(`${CLIENT_API_URL}/api/upload`, {
     method: 'POST',
     body: formData,
   });

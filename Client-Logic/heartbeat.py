@@ -33,9 +33,13 @@ def get_device_id() -> Optional[int]:
         return None
 
 
-def heartbeat_worker():
+def heartbeat_worker(parent_thread=None):
     """Lightweight daemon thread: send heartbeat every 60s, process commands."""
     while not _stop_event.is_set():
+        if parent_thread is not None:
+            from sync_engine import _sync_loop_thread
+            if parent_thread != _sync_loop_thread:
+                break
         try:
             if not config.sync_suspended and network_client.health_check():
                 device_id = get_device_id()

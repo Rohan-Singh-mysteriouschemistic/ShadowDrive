@@ -262,10 +262,14 @@ def finalize_local_db_after_upload(full_path: str, plaintext_hash: str, version_
 
 # ─── Upload Worker ────────────────────────────────────────────────────────────
 
-def upload_worker():
+def upload_worker(parent_thread=None):
     """Worker thread consuming upload jobs from the queue."""
     logger.info("Upload worker initialized and watching for jobs.")
     while not _stop_event.is_set():
+        if parent_thread is not None:
+            from sync_engine import _sync_loop_thread
+            if parent_thread != _sync_loop_thread:
+                break
         try:
             job = upload_queue.get(timeout=1.0)
         except queue.Empty:

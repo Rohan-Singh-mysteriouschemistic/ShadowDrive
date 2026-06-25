@@ -107,22 +107,36 @@ def _process_pending_uploads(device_id: int):
             mark_synced_db(event_id)
 
 
+_sync_loop_thread = None
+
+
 def start_sync_loop():
     """Main sync loop orchestrating upload, download, and heartbeat pipelines."""
+    global _sync_loop_thread
+    _sync_loop_thread = threading.current_thread()
     logger.info("Sync engine initialized.")
 
     _stop_event.clear()
 
     # Spawn upload workers (4 parallel threads)
     for i in range(4):
-        t = threading.Thread(target=upload_worker, name=f"upload-job-worker-{i}", daemon=True)
+        t = threading.Thread(
+            target=upload_worker,
+            args=(threading.current_thread(),),
+            name=f"upload-job-worker-{i}",
+            daemon=True
+        )
         t.start()
 
     # Spawn heartbeat worker (runs every 60s)
-    hb_thread = threading.Thread(target=heartbeat_worker, daemon=True)
+    hb_thread = threading.Thread(
+        target=heartbeat_worker,
+        args=(threading.current_thread(),),
+        daemon=True
+    )
     hb_thread.start()
 
-    while not _stop_event.is_set():
+    while not _stop_event.is_set() and threading.current_thread() == _sync_loop_thread:
         try:
             if config.sync_suspended:
                 logger.warning("Sync suspended — please login.")
@@ -145,7 +159,7 @@ def start_sync_loop():
         except Exception as e:
             logger.error("Sync loop error: {}", e)
 
-        if _stop_event.is_set():
+        if _stop_event.is_set() or threading.current_thread() != _sync_loop_thread:
             break
 
         event_listener.sync_nudge.wait(timeout=config.SYNC_INTERVAL_SECONDS)
@@ -154,9 +168,11 @@ def start_sync_loop():
 
 def stop_sync_loop():
     """Signal all background loops and threads to stop gracefully."""
+    global _sync_loop_thread
     logger.info("Sync engine shutting down.")
     _stop_event.set()
     event_listener.sync_nudge.set()
+    _sync_loop_thread = None
 
 
 def main():

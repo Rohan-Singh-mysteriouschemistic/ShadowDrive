@@ -3,6 +3,7 @@ import PageHeader from '../components/PageHeader';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import EmptyState from '../components/EmptyState';
+import { CLIENT_API_URL } from '../lib/api';
 
 interface TransferItem {
   id: string;
@@ -24,7 +25,7 @@ export default function TransferQueue() {
   useEffect(() => {
     const fetchTransfers = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8001/api/transfers');
+        const res = await fetch(`${CLIENT_API_URL}/api/transfers`);
         if (res.ok) {
           const data = await res.json();
           setTransfers(data.transfers || []);
