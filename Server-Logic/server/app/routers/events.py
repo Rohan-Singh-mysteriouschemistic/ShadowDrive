@@ -16,7 +16,7 @@ single-server deployments.  For multi-server, swap in Redis Pub/Sub.
 
 import asyncio
 import json
-import logging
+from loguru import logger
 import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -26,8 +26,6 @@ from fastapi.responses import StreamingResponse
 import redis.asyncio as aioredis
 from ..dependencies import get_current_user
 from .. import models
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
@@ -89,7 +87,7 @@ async def publish_event(user_id: int, event_type: str, payload: dict):
 
     if dropped:
         logger.warning(
-            "Dropped SSE event for %d slow subscriber(s) of user_id=%d",
+            "Dropped SSE event for {} slow subscriber(s) of user_id={}",
             dropped, user_id,
         )
 
@@ -100,7 +98,7 @@ async def listen_to_redis(redis_url: str):
     This listener allows the RQ worker (running in a separate process)
     to notify connected SSE clients when long-running jobs complete.
     """
-    logger.info("[REDIS] Starting event bridge listener on %s", redis_url)
+    logger.info("[REDIS] Starting event bridge listener on {}", redis_url)
     r = aioredis.from_url(redis_url, decode_responses=True)
     pubsub = r.pubsub()
     await pubsub.subscribe("shadowdrive:events")
@@ -116,16 +114,16 @@ async def listen_to_redis(redis_url: str):
                     
                     if user_id and event_type:
                         logger.info(
-                            "[REDIS] Forwarding %s to SSE for user_id=%d",
+                            "[REDIS] Forwarding {} to SSE for user_id={}",
                             event_type, user_id
                         )
                         await publish_event(user_id, event_type, data)
                 except (json.JSONDecodeError, ValueError) as e:
-                    logger.warning("[REDIS] Invalid message payload: %s", e)
+                    logger.warning("[REDIS] Invalid message payload: {}", e)
     except asyncio.CancelledError:
         logger.info("[REDIS] Listener task cancelled.")
     except Exception as e:
-        logger.error("[REDIS] Listener bridge encountered an error: %s", e)
+        logger.error("[REDIS] Listener bridge encountered an error: {}", e)
     finally:
         await pubsub.unsubscribe("shadowdrive:events")
         await r.aclose()

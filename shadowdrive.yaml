@@ -10,7 +10,7 @@ client:
   chunk_size_mb: 4
   sync_interval_sec: 10
   max_retries: 5
-  compression: "none"
+  compression: "zlib"
 
 logging:
   level: "INFO"

@@ -14,16 +14,14 @@ Thread model:
     Communication: threading.Event signals
 """
 
-import threading
-import logging
 import json
+import threading
 import time
-import requests
 
 import config
 import network_client
-
-logger = logging.getLogger(__name__)
+import requests
+from loguru import logger
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 # Set by the SSE listener when a relevant event arrives.
@@ -49,7 +47,7 @@ def listen():
 
         url = f"{config.SERVER_BASE_URL}/events/stream?token={token}"
         try:
-            logger.info("[SSE] Connecting to %s", url)
+            logger.info("[SSE] Connecting to {}", url)
             with requests.get(url, stream=True, timeout=(10, 45)) as resp:
                 resp.raise_for_status()
                 backoff = 1  # Reset on successful connection
@@ -65,14 +63,14 @@ def listen():
                                 "file_created", "file_updated", "file_deleted",
                                 "upload_complete", "conflict_detected",
                             ):
-                                logger.info("[SSE] Received %s — nudging sync engine", event_type)
+                                logger.info("[SSE] Received {} — nudging sync engine", event_type)
                                 sync_nudge.set()
 
                         except json.JSONDecodeError:
                             pass
 
         except requests.exceptions.RequestException as e:
-            logger.warning("[SSE] Connection failed: %s. Retrying in %ds", e, backoff)
+            logger.warning("[SSE] Connection failed: {}. Retrying in {}s", e, backoff)
 
         time.sleep(backoff)
         backoff = min(backoff * 2, max_backoff)

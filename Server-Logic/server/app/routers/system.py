@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+from loguru import logger
+import os
+import redis
 from ..database import get_db
 from ..dependencies import get_current_user
 from .. import models
-import random
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -17,10 +20,11 @@ def get_telemetry(
     """
     from sqlalchemy import func
     
-    # Only count nodes that are currently online
+    # Only count nodes that are currently online (excluding the browser interface)
     online_nodes = db.query(models.Device).filter(
         models.Device.user_id == current_user.id,
-        models.Device.is_online == True
+        models.Device.is_online == True,
+        models.Device.device_name != "Web Browser"
     ).count()
 
     # Calculate actual storage used by user
@@ -43,16 +47,61 @@ def get_telemetry(
 
     storage_str = format_bytes(storage_used_bytes)
 
+    # Perform connection handshakes
+    postgres_ok = False
+    try:
+        db.execute(text("SELECT 1"))
+        postgres_ok = True
+    except Exception as e:
+        logger.error("Postgres health check failed: {}", e)
+
+    minio_ok = False
+    try:
+        from .. import storage
+        s3 = storage._get_s3_client()
+        s3.list_buckets()
+        minio_ok = True
+    except Exception as e:
+        logger.error("MinIO health check failed: {}", e)
+
+    redis_ok = False
+    try:
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = redis.Redis.from_url(redis_url, socket_timeout=1.0)
+        r.ping()
+        redis_ok = True
+    except Exception as e:
+        logger.error("Redis health check failed: {}", e)
+
+    # Dynamic sync rate
+    components = [postgres_ok, minio_ok, redis_ok]
+    healthy_count = sum(1 for c in components if c)
+    sync_rate = round((healthy_count / len(components)) * 100, 2)
+
     return {
         "totalNodes": online_nodes,
-        "syncRate": 100.00,
+        "syncRate": sync_rate,
         "metrics": [
             {
                 "id": "db",
-                "name": "Database Load",
-                "value": "Low",
-                "status": "Healthy",
-                "history": [1, 2, 1, 3, 2, 1, 1, 2, 1, 1]
+                "name": "Database Connection",
+                "value": "Connected" if postgres_ok else "Offline",
+                "status": "Healthy" if postgres_ok else "Critical",
+                "history": [1 if postgres_ok else 0 for _ in range(10)]
+            },
+            {
+                "id": "minio",
+                "name": "MinIO Object Storage",
+                "value": "Connected" if minio_ok else "Offline",
+                "status": "Healthy" if minio_ok else "Critical",
+                "history": [1 if minio_ok else 0 for _ in range(10)]
+            },
+            {
+                "id": "redis",
+                "name": "Redis Event Bridge",
+                "value": "Connected" if redis_ok else "Offline",
+                "status": "Healthy" if redis_ok else "Critical",
+                "history": [1 if redis_ok else 0 for _ in range(10)]
             },
             {
                 "id": "storage",
@@ -62,6 +111,52 @@ def get_telemetry(
                 "history": [storage_used_bytes for _ in range(10)]
             }
         ]
+    }
+
+@router.get("/diagnostics")
+def get_diagnostics(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Runs actual connection checks for PostgreSQL, MinIO, and Redis.
+    """
+    postgres_ok = False
+    try:
+        db.execute(text("SELECT 1"))
+        postgres_ok = True
+    except Exception:
+        pass
+        
+    minio_ok = False
+    try:
+        from .. import storage
+        s3 = storage._get_s3_client()
+        s3.list_buckets()
+        minio_ok = True
+    except Exception:
+        pass
+
+    redis_ok = False
+    try:
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = redis.Redis.from_url(redis_url, socket_timeout=1.0)
+        r.ping()
+        redis_ok = True
+    except Exception:
+        pass
+
+    online_nodes = db.query(models.Device).filter(
+        models.Device.user_id == current_user.id,
+        models.Device.is_online == True,
+        models.Device.device_name != "Web Browser"
+    ).count()
+
+    return {
+        "postgres": "OK" if postgres_ok else "ERROR",
+        "minio": "OK" if minio_ok else "ERROR",
+        "redis": "OK" if redis_ok else "ERROR",
+        "nodes": f"{online_nodes} Connected" if online_nodes > 0 else "None Connected"
     }
 
 @router.get("/nodes")

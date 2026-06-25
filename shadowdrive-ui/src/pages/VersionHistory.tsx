@@ -1,6 +1,6 @@
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from '../lib/api';
+import { apiFetch, getDownloadUrl } from '../lib/api';
 import PageHeader from '../components/PageHeader';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -42,7 +42,7 @@ export default function VersionHistory() {
 
   const handleDownload = (e: React.MouseEvent, storagePath: string) => {
     e.stopPropagation();
-    const url = `http://127.0.0.1:8000/sync/download?storage_path=${encodeURIComponent(storagePath)}`;
+    const url = getDownloadUrl(storagePath);
     const a = document.createElement('a');
     a.href = url;
     a.download = storagePath.split('/').pop() || 'download';

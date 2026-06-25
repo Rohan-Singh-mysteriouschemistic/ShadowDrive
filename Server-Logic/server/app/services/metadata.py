@@ -12,7 +12,7 @@ Extracted from: routers/sync.py::announce_metadata (originally ~330 lines)
 """
 
 import os
-import logging
+from loguru import logger
 from datetime import datetime, timezone
 import asyncio
 from typing import Union, Optional
@@ -23,8 +23,6 @@ from sqlalchemy.exc import IntegrityError
 
 from .. import models, schemas, storage
 from ..routers.events import publish_event
-
-logger = logging.getLogger(__name__)
 
 def _fire_event(user_id: int, event_type: str, payload: dict):
     """Synchronous wrapper to publish async SSE events from sync code."""
@@ -252,7 +250,7 @@ def _handle_empty_file(
     try:
         storage.put_object(storage_key, b"")
     except Exception as e:
-        logger.warning("Failed to write empty object to MinIO: %s", e)
+        logger.warning("Failed to write empty object to MinIO: {}", e)
 
     return schemas.MetadataResponse(
         status="accepted_empty",
@@ -410,8 +408,8 @@ def _resolve_client_wins(
     _fire_event(user_id, "conflict_detected", {"file_id": file_record.id, "file_path": payload.path, "conflict_path": conflict_path, "winner_version_id": winner_version.id})
 
     logger.info(
-        "CONFLICT RESOLVED (LWW): client wins for '%s'. "
-        "Server version saved as conflict copy '%s'.",
+        "CONFLICT RESOLVED (LWW): client wins for '{}'. "
+        "Server version saved as conflict copy '{}'.",
         payload.path, conflict_path,
     )
 
@@ -469,8 +467,8 @@ def _resolve_server_wins(
     _fire_event(user_id, "conflict_detected", {"file_id": file_record.id, "file_path": payload.path, "conflict_path": conflict_path, "winner_version_id": server_latest.id})
 
     logger.info(
-        "CONFLICT RESOLVED (LWW): server wins for '%s'. "
-        "Client version saved as conflict copy '%s'.",
+        "CONFLICT RESOLVED (LWW): server wins for '{}'. "
+        "Client version saved as conflict copy '{}'.",
         payload.path, conflict_path,
     )
 

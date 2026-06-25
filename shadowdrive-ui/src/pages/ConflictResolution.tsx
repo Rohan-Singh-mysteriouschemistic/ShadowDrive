@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useConflicts, useResolveConflict } from '../hooks/useConflicts';
 import { useEventInvalidation } from '../hooks/useEvents';
 import PageHeader from '../components/PageHeader';
 import Card from '../components/Card';
 import Button from '../components/Button';
+import Modal from '../components/Modal';
 
 export default function ConflictResolution() {
   const { data: conflicts = [], isLoading } = useConflicts();
@@ -11,6 +12,33 @@ export default function ConflictResolution() {
   useEventInvalidation();
 
   const [logs, setLogs] = useState<{ id: number; time: string; msg: string; type: string }[]>([]);
+  const [previewContent, setPreviewContent] = useState<{ title: string; content: string; isLoading: boolean } | null>(null);
+  const [showNoConflictsModal, setShowNoConflictsModal] = useState(false);
+
+  const handlePreview = useCallback(async (filePath: string, label: string) => {
+    setPreviewContent({ title: `Preview — ${label}`, content: '', isLoading: true });
+    try {
+      const res = await fetch(`http://127.0.0.1:8001/api/download?file_path=${encodeURIComponent(filePath)}`);
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('text') || contentType.includes('json')) {
+          const text = await res.text();
+          setPreviewContent({ title: `Preview — ${label}`, content: text, isLoading: false });
+        } else {
+          const blob = await res.blob();
+          setPreviewContent({
+            title: `Preview — ${label}`,
+            content: `[Binary file]\nSize: ${blob.size} bytes\nType: ${contentType || 'unknown'}`,
+            isLoading: false,
+          });
+        }
+      } else {
+        setPreviewContent({ title: `Preview — ${label}`, content: `Failed to load preview (HTTP ${res.status})`, isLoading: false });
+      }
+    } catch (err) {
+      setPreviewContent({ title: `Preview — ${label}`, content: 'Failed to load preview: Network error', isLoading: false });
+    }
+  }, []);
 
   const addLog = (msg: string, type: string) => {
     setLogs(prev => [{
@@ -55,7 +83,10 @@ export default function ConflictResolution() {
             size="sm"
             icon="auto_fix_high"
             onClick={() => {
-              if (!conflicts.length) return;
+              if (!conflicts.length) {
+                setShowNoConflictsModal(true);
+                return;
+              }
               resolveConflict(
                 conflicts[0].original_file_id,
                 conflicts[0].conflict_file_id,
@@ -137,7 +168,7 @@ export default function ConflictResolution() {
                             size="sm"
                             icon="visibility"
                             className="flex-1"
-                            onClick={() => alert("Preview Option A")}
+                            onClick={() => handlePreview(conflict.path, `Option A — ${conflict.optionA.device}`)}
                           >
                             Preview
                           </Button>
@@ -173,7 +204,7 @@ export default function ConflictResolution() {
                             size="sm"
                             icon="visibility"
                             className="flex-1"
-                            onClick={() => alert("Preview Option B")}
+                            onClick={() => handlePreview(conflict.path, `Option B — ${conflict.optionB.device}`)}
                           >
                             Preview
                           </Button>
@@ -225,6 +256,40 @@ export default function ConflictResolution() {
           </Card>
         </div>
       </div>
+
+      <Modal
+        open={!!previewContent}
+        onClose={() => setPreviewContent(null)}
+        title={previewContent?.title || 'Preview'}
+        maxWidth="lg"
+        footer={
+          <Button variant="ghost" onClick={() => setPreviewContent(null)}>Close</Button>
+        }
+      >
+        {previewContent?.isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (
+          <pre className="bg-surface-container-low text-on-surface border border-white/10 rounded-lg p-4 font-mono text-sm whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto">
+            {previewContent?.content || 'No content available'}
+          </pre>
+        )}
+      </Modal>
+
+      <Modal
+        open={showNoConflictsModal}
+        onClose={() => setShowNoConflictsModal(false)}
+        title="Conflict Resolver"
+        footer={
+          <Button variant="primary" onClick={() => setShowNoConflictsModal(false)}>Acknowledge</Button>
+        }
+      >
+        <p className="text-on-surface-variant font-code-sm">
+          No active conflicts found. System is fully synchronized.
+        </p>
+      </Modal>
+
     </div>
   );
 }

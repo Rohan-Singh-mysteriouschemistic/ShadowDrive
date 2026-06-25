@@ -3,13 +3,14 @@ main.py — CLI Wrapper Entry Point for ShadowDrive++ Client
 Supports registration, login, and launching the watcher sync agent.
 """
 
-import sys
 import getpass
-import network_client
-import watcher
+import sys
+
 import config
 import crypto_utils
-
+import network_client
+import watcher
+from loguru import logger
 
 # ─── Encryption Key Setup ───────────────────────────────────────────────────
 
@@ -21,18 +22,18 @@ def _prompt_and_store_encryption_key(email: str):
     print("This passphrase is NEVER sent to the server.")
     passphrase = getpass.getpass("Encryption passphrase: ")
     if not passphrase:
-        print("[ERROR] Encryption passphrase cannot be empty.")
+        logger.error("Encryption passphrase cannot be empty.")
         return False
     confirm = getpass.getpass("Confirm passphrase: ")
     if passphrase != confirm:
-        print("[ERROR] Passphrases do not match.")
+        logger.error("Passphrases do not match.")
         return False
 
     key = crypto_utils.derive_key(passphrase, email)
     network_client._save_setting("encryption_key", key.hex())
     network_client._save_setting("user_email", email)
     config.encryption_key = key
-    print("[OK] Encryption key derived and stored locally.\n")
+    logger.success("Encryption key derived and stored locally.")
     return True
 
 
@@ -42,7 +43,7 @@ def _load_encryption_key():
     key_hex = network_client._get_setting("encryption_key")
     if key_hex:
         config.encryption_key = bytes.fromhex(key_hex)
-        print("[INFO] Encryption key loaded from local database.")
+        logger.info("Encryption key loaded from local database.")
         return True
 
     # Key not stored yet — prompt for passphrase
@@ -50,20 +51,20 @@ def _load_encryption_key():
     if not email:
         email = input("Email (for key derivation): ").strip()
         if not email:
-            print("[WARNING] Cannot derive encryption key without email.")
+            logger.warning("Cannot derive encryption key without email.")
             return False
 
     print("\n[FIRST RUN] No encryption key found. Please set your passphrase.")
     passphrase = getpass.getpass("Encryption passphrase: ")
     if not passphrase:
-        print("[WARNING] No passphrase entered. Encryption is DISABLED.")
+        logger.warning("No passphrase entered. Encryption is DISABLED.")
         return False
 
     key = crypto_utils.derive_key(passphrase, email)
     network_client._save_setting("encryption_key", key.hex())
     network_client._save_setting("user_email", email)
     config.encryption_key = key
-    print("[OK] Encryption key derived and stored locally.")
+    logger.success("Encryption key derived and stored locally.")
     return True
 
 
@@ -81,7 +82,7 @@ def run_login():
     if not password:
         print("Password cannot be empty.")
         return
-    
+
     print("\nAuthenticating with server...")
     success, msg = network_client.login_user(email, password)
     print(msg)
@@ -90,7 +91,7 @@ def run_login():
         # After successful login, set up encryption key
         _prompt_and_store_encryption_key(email)
         config.sync_suspended = False
-        print("[INFO] Login complete. You may now start the watcher.")
+        logger.info("Login complete. You may now start the watcher.")
 
 def run_register():
     print("=" * 50)
@@ -108,7 +109,7 @@ def run_register():
     if not password:
         print("Password cannot be empty.")
         return
-    
+
     print("\nRegistering account on server...")
     success, msg = network_client.register_user(username, email, password)
     print(msg)
@@ -120,7 +121,7 @@ def run_register():
         print(login_msg)
         if login_ok:
             _prompt_and_store_encryption_key(email)
-            print("[INFO] Registration & login complete. You may now start the watcher.")
+            logger.info("Registration & login complete. You may now start the watcher.")
 
 
 # ─── Main Entry ──────────────────────────────────────────────────────────────
@@ -141,18 +142,18 @@ def main():
         # Check if we have a token stored in db, else warn the user
         token = network_client._get_token()
         if not token:
-            print("=" * 60)
-            print("[WARNING] No active login token found!")
-            print("Sync will remain suspended until you authenticate.")
-            print("Please run: python main.py login (or python main.py register)")
-            print("=" * 60)
+            logger.warning("=" * 60)
+            logger.warning("No active login token found!")
+            logger.warning("Sync will remain suspended until you authenticate.")
+            logger.warning("Please run: python main.py login (or python main.py register)")
+            logger.warning("=" * 60)
             config.sync_suspended = True
         else:
-            print("[INFO] Active authentication token loaded from database.")
+            logger.info("Active authentication token loaded from database.")
 
         # Load or prompt for encryption key
         _load_encryption_key()
-        
+
         # Start the normal watcher
         watcher.main()
 

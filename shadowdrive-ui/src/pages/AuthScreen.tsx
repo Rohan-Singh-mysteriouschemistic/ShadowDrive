@@ -12,6 +12,35 @@ const fadeIn = (delay: number) => ({
   transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] as [number, number, number, number], delay },
 });
 
+function formatErrorMessage(error: any): string {
+  if (typeof error === 'string') {
+    try {
+      const parsed = JSON.parse(error);
+      return formatErrorMessage(parsed);
+    } catch {
+      return error;
+    }
+  }
+  
+  if (typeof error === 'object' && error !== null) {
+    if (error.detail) {
+      return formatErrorMessage(error.detail);
+    }
+    if (Array.isArray(error)) {
+      return error.map(err => {
+        if (err.msg) {
+          const field = err.loc ? err.loc[err.loc.length - 1] : '';
+          return `${field ? field.toUpperCase() + ': ' : ''}${err.msg}`;
+        }
+        return JSON.stringify(err);
+      }).join(', ');
+    }
+    return JSON.stringify(error);
+  }
+  
+  return String(error);
+}
+
 export default function AuthScreen() {
   const location = useLocation();
   const [isLogin, setIsLogin] = useState(!location.search.includes('mode=deploy'));
@@ -29,6 +58,12 @@ export default function AuthScreen() {
     const password = formData.get('password') as string;
     const passphrase = formData.get('passphrase') as string;
 
+    if (!passphrase) {
+      setError("Encryption Passphrase is required. Please fill it to secure your vault.");
+      setLoading(false);
+      return;
+    }
+
     try {
       const endpoint = isLogin ? 'http://127.0.0.1:8001/api/auth/login' : 'http://127.0.0.1:8001/api/auth/register';
       const body = isLogin
@@ -43,7 +78,11 @@ export default function AuthScreen() {
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || 'Authentication failed. Make sure the local Client Agent is running.');
+        const detail = errData.detail;
+        if (typeof detail === 'object') {
+          throw new Error(JSON.stringify(detail));
+        }
+        throw new Error(detail || 'Authentication failed. Make sure the local Client Agent is running.');
       }
 
       const data = await response.json();
@@ -56,7 +95,7 @@ export default function AuthScreen() {
 
       navigate(location.search.includes('mode=deploy') ? '/nodes/deploy' : '/vault');
     } catch (err: any) {
-      setError(err.message || 'An error occurred during authentication.');
+      setError(formatErrorMessage(err.message || err));
     } finally {
       setLoading(false);
     }

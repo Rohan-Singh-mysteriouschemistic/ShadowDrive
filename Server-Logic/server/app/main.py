@@ -1,4 +1,5 @@
-import logging
+from loguru import logger
+import sys
 import asyncio
 import os
 from contextlib import asynccontextmanager
@@ -8,8 +9,8 @@ from . import models, schemas, utils, storage
 from .database import engine, SessionLocal
 from .routers.events import listen_to_redis
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger.remove()
+logger.add(sys.stderr, level="INFO")
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -29,7 +30,7 @@ async def lifespan(app: FastAPI):
         storage.ensure_bucket_exists()
         logger.info("MinIO bucket initialized successfully.")
     except Exception as e:
-        logger.warning("MinIO not reachable at startup: %s (will retry on first upload)", e)
+        logger.warning("MinIO not reachable at startup: {} (will retry on first upload)", e)
     
     yield
 

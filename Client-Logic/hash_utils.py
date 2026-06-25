@@ -3,10 +3,11 @@ hash_utils.py — Cryptographic Hash Generation Tools
 Handles chunk validation and empty data boundary rules.
 """
 
-import os
 import hashlib
+import os
 
 import config
+
 
 def _get_chunk_size():
     return getattr(config, 'CHUNK_SIZE', 4 * 1024 * 1024)
@@ -47,7 +48,7 @@ def chunk_and_hash_file(file_path: str) -> list[str]:
     try:
         if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
             return [EMPTY_FILE_SHA256]
-        
+
         chunk_sz = _get_chunk_size()
         with open(file_path, "rb") as f:
             while True:
@@ -74,7 +75,7 @@ def compute_file_and_chunk_hashes(file_path: str, chunk_size: int) -> tuple[str,
 
     file_sha = hashlib.sha256()
     chunk_hashes = []
-    
+
     try:
         with open(file_path, "rb") as f:
             while True:

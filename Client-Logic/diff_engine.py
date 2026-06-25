@@ -7,8 +7,10 @@ import os
 import sqlite3
 import time
 from datetime import datetime
-from hash_utils import hash_file, compute_file_and_chunk_hashes
+
 import config
+from hash_utils import compute_file_and_chunk_hashes
+from loguru import logger
 
 # Fallback checking logic ensures matching targets across scripts
 config.DB_PATH = getattr(config, 'DB_PATH', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shadow.db"))
@@ -51,7 +53,7 @@ def ensure_db():
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             event_type TEXT NOT NULL,
             file_path  TEXT NOT NULL,
-            hash       TEXT, 
+            hash       TEXT,
             is_synced  INTEGER DEFAULT 0,
             timestamp  TEXT NOT NULL
         )
@@ -62,6 +64,8 @@ def ensure_db():
         pass
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_events_is_synced ON events (is_synced)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files (hash)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_events_file_path ON events (file_path, is_synced)")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS chunk_signatures (
@@ -111,7 +115,7 @@ def _log_event(cur, event_type, file_path, file_hash=None, version_id=0):
         INSERT INTO events (event_type, file_path, hash, timestamp, version_id)
         VALUES (?, ?, ?, ?, ?)
     """, (event_type, file_path, file_hash, timestamp, version_id))
-    
+
     # Nudge the sync loop to upload immediately
     try:
         import event_listener
@@ -141,9 +145,9 @@ def update_chunk_signatures(cur, file_path, chunk_hashes=None):
 
 def process_single_file(path, event_type):
     """Processes discrete event mutations targeted by OS folder hooks."""
-    from sync_engine import is_local_mutation_active
-    
-    # CRITICAL: If Week 6 download worker generated this change, ignore it
+    from state import is_local_mutation_active
+
+    # CRITICAL: If download worker generated this change, ignore it
     if is_local_mutation_active():
         return
 
@@ -154,7 +158,7 @@ def process_single_file(path, event_type):
     normalized_path = os.path.normpath(path)
 
     if event_type == "deleted":
-        print(f"[DELETED]  {os.path.basename(normalized_path)}")
+        logger.info("[DELETED] {}", os.path.basename(normalized_path))
         _log_event(cur, "deleted", normalized_path)
         _delete_file(cur, normalized_path)
     else:
@@ -165,24 +169,24 @@ def process_single_file(path, event_type):
             stat      = os.stat(normalized_path)
             file_hash, chunk_hashes = compute_file_and_chunk_hashes(normalized_path, config.CHUNK_SIZE)
 
-            if not file_hash: 
+            if not file_hash:
                 conn.close()
                 return
 
             cur.execute("SELECT hash, version_id FROM files WHERE file_path = ?", (normalized_path,))
             row = cur.fetchone()
-            
+
             db_hash = row[0] if row else None
             version_id = row[1] if row else 0
 
             if row is None:
-                print(f"[NEW]      {os.path.basename(normalized_path)} at {time.time()}")
+                logger.info("[NEW] {} at {}", os.path.basename(normalized_path), time.time())
                 _log_event(cur, "new", normalized_path, file_hash, version_id)
             elif db_hash != file_hash:
-                print(f"[MODIFIED] {os.path.basename(normalized_path)} at {time.time()}")
+                logger.info("[MODIFIED] {} at {}", os.path.basename(normalized_path), time.time())
                 _log_event(cur, "modified", normalized_path, file_hash, version_id)
             else:
-                print(f"[IGNORED] {os.path.basename(normalized_path)} unchanged at {time.time()}")
+                logger.debug("[IGNORED] {} unchanged at {}", os.path.basename(normalized_path), time.time())
                 conn.close()
                 return
 
@@ -190,9 +194,9 @@ def process_single_file(path, event_type):
                 INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id)
                 VALUES (?, ?, ?, ?, ?)
             """, (normalized_path, file_hash, stat.st_size, stat.st_mtime, version_id))
-            
+
             update_chunk_signatures(cur, normalized_path, chunk_hashes)
-            
+
         except OSError:
             conn.close()
             return
@@ -203,9 +207,10 @@ def process_single_file(path, event_type):
 
 def run_full_scan():
     """Bootstrap scanner that catches changes made while agent daemon was completely dark."""
+    from watcher import is_ignored
     ensure_db()
-    
-    from sync_engine import is_local_mutation_active
+
+    from state import is_local_mutation_active
     if is_local_mutation_active():
         return
 
@@ -223,8 +228,10 @@ def run_full_scan():
     for root, _, files in os.walk(config.WATCH_DIR):
         for file in files:
             full_path = os.path.normpath(os.path.join(root, file))
+            if is_ignored(full_path):
+                continue
             current_paths.add(full_path)
-            
+
             try:
                 stat = os.stat(full_path)
                 h, chunk_hashes = compute_file_and_chunk_hashes(full_path, config.CHUNK_SIZE)
@@ -232,21 +239,21 @@ def run_full_scan():
                     continue
 
                 if full_path not in db_records:
-                    print(f"[BOOTSTRAP FIND] New entry -> {file}")
+                    logger.info("[BOOTSTRAP FIND] New entry -> {}", file)
                     conn_file = get_db_connection()
                     cur_file = conn_file.cursor()
                     _log_event(cur_file, "new", full_path, h, 0)
-                    cur_file.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)", 
+                    cur_file.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)",
                                 (full_path, h, stat.st_size, stat.st_mtime, 0))
                     update_chunk_signatures(cur_file, full_path, chunk_hashes)
                     conn_file.commit()
                     conn_file.close()
                 elif db_records[full_path][0] != h:
-                    print(f"[BOOTSTRAP FIND] Modified entry -> {file}")
+                    logger.info("[BOOTSTRAP FIND] Modified entry -> {}", file)
                     conn_file = get_db_connection()
                     cur_file = conn_file.cursor()
                     _log_event(cur_file, "modified", full_path, h, db_records[full_path][1])
-                    cur_file.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)", 
+                    cur_file.execute("INSERT OR REPLACE INTO files (file_path, hash, size, last_modified, version_id) VALUES (?, ?, ?, ?, ?)",
                                 (full_path, h, stat.st_size, stat.st_mtime, db_records[full_path][1]))
                     update_chunk_signatures(cur_file, full_path, chunk_hashes)
                     conn_file.commit()
@@ -257,7 +264,7 @@ def run_full_scan():
     for tracked_path in db_records:
         normalized_tracked = os.path.normpath(tracked_path)
         if normalized_tracked not in current_paths:
-            print(f"[BOOTSTRAP FIND] Vanished entry -> {os.path.basename(normalized_tracked)}")
+            logger.info("[BOOTSTRAP FIND] Vanished entry -> {}", os.path.basename(normalized_tracked))
             conn_file = get_db_connection()
             cur_file = conn_file.cursor()
             _log_event(cur_file, "deleted", normalized_tracked, None, db_records[tracked_path][1])

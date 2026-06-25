@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 130
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"Client-Logic/resilient_http.py" = ["E701"]
+"tests/*" = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"

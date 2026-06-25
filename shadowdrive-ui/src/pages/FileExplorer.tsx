@@ -1,8 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFiles, useUploadFile, useDeleteFile } from '../hooks/useFiles';
 import { useEventInvalidation } from '../hooks/useEvents';
-import { getDownloadUrl } from '../lib/api';
+import { getDownloadUrl, apiFetch } from '../lib/api';
+import { useQuery } from '@tanstack/react-query';
 import Button from '../components/Button';
 import PageHeader from '../components/PageHeader';
 import Card from '../components/Card';
@@ -30,6 +31,66 @@ export default function FileExplorer() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [transfers, setTransfers] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchTransfers = async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:8001/api/transfers');
+        if (res.ok) {
+          const data = await res.json();
+          setTransfers(data.transfers || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch transfers for file explorer', err);
+      }
+    };
+    fetchTransfers();
+    const interval = setInterval(fetchTransfers, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const combinedFiles = useMemo(() => {
+    const activeUploads = transfers
+      .filter((t: any) => t.direction === 'upload' && (t.status === 'active' || t.status === 'queued'))
+      .map((t: any, idx: number) => {
+        const fileExists = files.some((f: any) => f.file_path === t.filename);
+        if (fileExists) return null;
+        
+        return {
+          id: `transfer-${t.id || idx}`,
+          file_path: t.filename,
+          size_bytes: parseInt(t.size.replace(/[^0-9.]/g, '')) * 1024 || 0,
+          updated_at: new Date().toISOString(),
+          upload_status: 'uploading',
+          is_conflict_copy: false,
+        };
+      })
+      .filter(Boolean) as any[];
+
+    const mappedFiles = files.map((f: any) => {
+      const activeT = transfers.find((t: any) => t.filename === f.file_path && t.direction === 'upload' && (t.status === 'active' || t.status === 'queued'));
+      if (activeT) {
+        return { ...f, upload_status: 'uploading' };
+      }
+      return f;
+    });
+
+    return [...activeUploads, ...mappedFiles];
+  }, [files, transfers]);
+
+  const { data: userData } = useQuery<{ id: number; username: string; email: string; storage_quota: number }>({
+    queryKey: ['user-me'],
+    queryFn: () => apiFetch('/auth/me'),
+    staleTime: 60_000,
+  });
+
+  const storageUsed = useMemo(() => {
+    return files.reduce((acc: number, f: any) => acc + (f.size_bytes || 0), 0);
+  }, [files]);
+
+  const storageQuota = userData?.storage_quota ?? 0;
+  const usagePercent = storageQuota > 0 ? Math.min(100, (storageUsed / storageQuota) * 100) : 0;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -123,8 +184,8 @@ export default function FileExplorer() {
   };
 
   const filteredFiles = searchQuery
-    ? files.filter(f => f.file_path.toLowerCase().includes(searchQuery.toLowerCase()))
-    : files;
+    ? combinedFiles.filter(f => f.file_path.toLowerCase().includes(searchQuery.toLowerCase()))
+    : combinedFiles;
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden w-full relative bg-transparent">
@@ -144,6 +205,22 @@ export default function FileExplorer() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+            {storageQuota > 0 && (
+              <div className="flex items-center gap-3 px-3 py-1.5 bg-surface-container-low border border-white/10 rounded-DEFAULT" title={`${formatBytes(storageUsed)} / ${formatBytes(storageQuota)}`}>
+                <span className="material-symbols-outlined text-on-surface-variant text-sm">cloud</span>
+                <div className="flex flex-col gap-0.5 min-w-[120px]">
+                  <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${usagePercent > 90 ? 'bg-error' : usagePercent > 70 ? 'bg-yellow-500' : 'bg-primary'}`}
+                      style={{ width: `${usagePercent}%` }}
+                    />
+                  </div>
+                  <span className="font-code-sm text-[10px] text-on-surface-variant leading-none">
+                    {formatBytes(storageUsed)} / {formatBytes(storageQuota)}
+                  </span>
+                </div>
+              </div>
+            )}
             <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
             <Button variant="primary" size="md" icon="upload" onClick={handleUploadClick}>
               Upload File
@@ -153,7 +230,14 @@ export default function FileExplorer() {
       />
 
       <div className="flex-1 overflow-y-auto p-margin-desktop z-10">
-        <Card className="w-full max-w-container-max mx-auto">
+        <div className="w-full max-w-container-max mx-auto">
+          {uploadMutation.isPending && (
+            <div className="flex items-center gap-2 p-4 mb-4 bg-primary/10 border border-primary/20 rounded text-primary font-code-sm">
+              <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+              <span>Adding file to local watch folder and syncing...</span>
+            </div>
+          )}
+          <Card className="w-full">
           <div className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/10 font-code-sm text-code-sm text-on-surface-variant bg-surface-container-low/50">
             <div className="col-span-5">Name</div>
             <div className="col-span-2">Size</div>
@@ -229,6 +313,7 @@ export default function FileExplorer() {
           </div>
         </Card>
       </div>
+    </div>
 
       <Modal
         open={!!fileToDelete}

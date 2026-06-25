@@ -1,13 +1,11 @@
 import os
 import time
-import logging
+from loguru import logger
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, status, HTTPException, Request
 from sqlalchemy.orm import Session
 import redis.asyncio as aioredis
 from .. import database, models, utils, schemas
-
-logger = logging.getLogger(__name__)
 
 class RateLimiter:
     def __init__(self):
@@ -20,7 +18,7 @@ class RateLimiter:
             try:
                 self._redis = aioredis.from_url(self.redis_url, decode_responses=True)
             except Exception as e:
-                logger.warning("Failed to create Redis client for RateLimiter: %s", e)
+                logger.warning("Failed to create Redis client for RateLimiter: {}", e)
         return self._redis
 
     async def check_rate_limit(self, ip: str) -> bool:
@@ -43,7 +41,7 @@ class RateLimiter:
                     return False
                 return True
             except Exception as e:
-                logger.warning("Redis rate limiter execution failed, falling back to local memory: %s", e)
+                logger.warning("Redis rate limiter execution failed, falling back to local memory: {}", e)
 
         # In-memory dict sliding window fallback
         history = self._local_history.get(ip, [])

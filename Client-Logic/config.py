@@ -4,8 +4,10 @@ Handles environment configurations with Pydantic and YAML.
 """
 
 import os
+
 import yaml
 from pydantic import BaseModel, Field
+
 
 class ServerConfig(BaseModel):
     url: str = "http://localhost:8000"
@@ -35,7 +37,7 @@ class AppConfig(BaseModel):
 
 def load_config(path: str) -> AppConfig:
     if os.path.exists(path):
-        with open(path, "r") as f:
+        with open(path) as f:
             data = yaml.safe_load(f) or {}
         return AppConfig.model_validate(data)
     return AppConfig()
@@ -57,7 +59,7 @@ else:
 DB_PATH = os.path.join(BASE_DIR, "shadow.db")
 
 CHUNK_SIZE = app_config.client.chunk_size_mb * 1024 * 1024
-CHUNK_THRESHOLD = CHUNK_SIZE  
+CHUNK_THRESHOLD = CHUNK_SIZE
 
 SYNC_INTERVAL_SECONDS = app_config.client.sync_interval_sec
 
@@ -67,7 +69,23 @@ RETRY_MAX_BACKOFF_SECONDS = 60
 
 HASH_ALGORITHM = "sha256"
 
+COMPRESSION = app_config.client.compression  # "none" or "zlib"
+
 # ─── Auth State ──────────────────────────────────────────────────────────────
 sync_suspended = False
 encryption_key = None
+
+def update_user_config(email: str):
+    """Dynamically updates database and watcher directory paths to isolate data per user."""
+    from loguru import logger
+    # Clean email to form a valid file/directory name component
+    email_clean = "".join([c if c.isalnum() or c in ".-_" else "_" for c in email])
+    
+    global WATCH_DIR, DB_PATH
+    WATCH_DIR = os.path.expanduser(f"~/ShadowDrive_{email_clean}")
+    DB_PATH = os.path.join(BASE_DIR, f"shadow_{email_clean}.db")
+    
+    os.makedirs(WATCH_DIR, exist_ok=True)
+    logger.info("Paths dynamically updated for {}: WATCH_DIR={}, DB_PATH={}", email, WATCH_DIR, DB_PATH)
+
 

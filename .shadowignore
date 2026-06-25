@@ -1,0 +1,38 @@
+# ShadowDrive Ignore Patterns
+# Files and directories matching these patterns will not be synced.
+# Uses gitignore-style glob patterns (via pathspec library).
+
+# Version control
+.git/
+.svn/
+.hg/
+
+# Package manager caches
+node_modules/
+__pycache__/
+*.pyc
+.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+*.o
+*.so
+*.dylib
+
+# Temporary files
+*.tmp
+*.temp
+*.log

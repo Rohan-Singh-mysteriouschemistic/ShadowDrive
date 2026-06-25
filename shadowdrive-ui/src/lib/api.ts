@@ -1,6 +1,30 @@
-export const BASE_URL = 'http://127.0.0.1:8000';
+export let BASE_URL = 'http://127.0.0.1:8000';
+
+let configPromise: Promise<void> | null = null;
+
+export function getOrFetchConfig(): Promise<void> {
+  if (configPromise) {
+    return configPromise;
+  }
+  configPromise = (async () => {
+    try {
+      const response = await fetch('http://127.0.0.1:8001/api/config');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.server_url) {
+          BASE_URL = data.server_url.endsWith('/') ? data.server_url.slice(0, -1) : data.server_url;
+          console.log('[API] Dynamically set BASE_URL to:', BASE_URL);
+        }
+      }
+    } catch (err) {
+      console.error('[API] Failed to fetch server config from local client api', err);
+    }
+  })();
+  return configPromise;
+}
 
 let inMemoryToken: string | null = null;
+let tokenPromise: Promise<string | null> | null = null;
 
 export function getToken(): string | null {
   return inMemoryToken;
@@ -8,18 +32,31 @@ export function getToken(): string | null {
 
 export function setToken(token: string | null) {
   inMemoryToken = token;
+  tokenPromise = token ? Promise.resolve(token) : null;
 }
 
-async function fetchTokenFromServer(): Promise<void> {
-  try {
-    const response = await fetch('http://127.0.0.1:8001/api/auth/token');
-    if (response.ok) {
-      const data = await response.json();
-      inMemoryToken = data.access_token;
-    }
-  } catch (err) {
-    console.error('[Token fetch] Failed to fetch token from local client api', err);
+export async function getOrFetchToken(): Promise<string | null> {
+  await getOrFetchConfig();
+  if (inMemoryToken !== null) {
+    return Promise.resolve(inMemoryToken);
   }
+  if (tokenPromise) {
+    return tokenPromise;
+  }
+  tokenPromise = (async () => {
+    try {
+      const response = await fetch('http://127.0.0.1:8001/api/auth/token');
+      if (response.ok) {
+        const data = await response.json();
+        inMemoryToken = data.access_token;
+        return inMemoryToken;
+      }
+    } catch (err) {
+      console.error('[Token fetch] Failed to fetch token from local client api', err);
+    }
+    return null;
+  })();
+  return tokenPromise;
 }
 
 /**
@@ -57,9 +94,8 @@ async function withRetry<T>(
 }
 
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
-  if (inMemoryToken === null) {
-    await fetchTokenFromServer();
-  }
+  await getOrFetchConfig();
+  await getOrFetchToken();
 
   const doFetch = async () => {
     const token = getToken();

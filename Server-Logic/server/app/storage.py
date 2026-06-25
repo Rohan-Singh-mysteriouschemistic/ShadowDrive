@@ -17,12 +17,10 @@ Environment variables (defaults match docker-compose.yml):
 
 import os
 import io
-import logging
+from loguru import logger
 import boto3
 from botocore.client import Config as BotoConfig
 from botocore.exceptions import ClientError
-
-logger = logging.getLogger(__name__)
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
@@ -56,10 +54,10 @@ def ensure_bucket_exists():
     s3 = _get_s3_client()
     try:
         s3.head_bucket(Bucket=MINIO_BUCKET)
-        logger.info("MinIO bucket '%s' already exists.", MINIO_BUCKET)
+        logger.info("MinIO bucket '{}' already exists.", MINIO_BUCKET)
     except ClientError:
         s3.create_bucket(Bucket=MINIO_BUCKET)
-        logger.info("MinIO bucket '%s' created.", MINIO_BUCKET)
+        logger.info("MinIO bucket '{}' created.", MINIO_BUCKET)
 
 
 def put_object(key: str, data: bytes) -> int:
@@ -79,7 +77,7 @@ def put_object(key: str, data: bytes) -> int:
         Body=data,
         ContentLength=len(data),
     )
-    logger.debug("PUT %s (%d bytes)", key, len(data))
+    logger.debug("PUT {} ({} bytes)", key, len(data))
     return len(data)
 
 
@@ -101,7 +99,7 @@ def put_object_stream(key: str, stream, length: int) -> int:
         Body=stream,
         ContentLength=length,
     )
-    logger.debug("PUT (stream) %s (%d bytes)", key, length)
+    logger.debug("PUT (stream) {} ({} bytes)", key, length)
     return length
 
 
@@ -114,7 +112,7 @@ def get_object(key: str) -> bytes:
     s3 = _get_s3_client()
     response = s3.get_object(Bucket=MINIO_BUCKET, Key=key)
     data = response["Body"].read()
-    logger.debug("GET %s (%d bytes)", key, len(data))
+    logger.debug("GET {} ({} bytes)", key, len(data))
     return data
 
 
@@ -122,7 +120,7 @@ def delete_object(key: str):
     """Delete an object from MinIO.  No-op if the key doesn't exist."""
     s3 = _get_s3_client()
     s3.delete_object(Bucket=MINIO_BUCKET, Key=key)
-    logger.debug("DELETE %s", key)
+    logger.debug("DELETE {}", key)
 
 
 def assemble_chunks(chunk_keys: list[str], final_key: str) -> int:
@@ -162,5 +160,5 @@ def assemble_chunks(chunk_keys: list[str], final_key: str) -> int:
         if not ck.startswith("chunks/"):
             s3.delete_object(Bucket=MINIO_BUCKET, Key=ck)
 
-    logger.info("Assembled %d chunks → %s (%d bytes)", len(chunk_keys), final_key, total_bytes)
+    logger.info("Assembled {} chunks → {} ({} bytes)", len(chunk_keys), final_key, total_bytes)
     return total_bytes

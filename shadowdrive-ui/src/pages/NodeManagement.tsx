@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useNodes, useRenameNode, useSendCommand } from '../hooks/useNodes';
 import PageHeader from '../components/PageHeader';
 import Card from '../components/Card';
@@ -7,6 +8,7 @@ import Modal from '../components/Modal';
 import EmptyState from '../components/EmptyState';
 
 export default function NodeManagement() {
+  const navigate = useNavigate();
   const { data: nodes = [] } = useNodes();
   const renameNode = useRenameNode();
   const sendCommand = useSendCommand();
@@ -49,6 +51,16 @@ export default function NodeManagement() {
         icon="settings_ethernet"
         title="Connected Nodes"
         iconColor="text-primary"
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            icon="add"
+            onClick={() => navigate('/nodes/deploy')}
+          >
+            Deploy New Node
+          </Button>
+        }
       />
 
       <div className="flex-1 overflow-y-auto p-margin-desktop no-scrollbar">

@@ -1,13 +1,14 @@
 import os
 import shutil
-import logging
+from loguru import logger
 import hashlib
 from fastapi import status, HTTPException, Depends, APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy import text
-from typing import List
+from sqlalchemy.exc import IntegrityError
+from typing import List, Optional
 from .. import models, schemas
 from ..database import get_db
 from .. import storage
@@ -15,8 +16,6 @@ from ..models import UploadStatus
 from ..worker import enqueue_verify, enqueue_assemble_and_verify
 from ..services.metadata import process_metadata_sync, _fire_event
 from ..dependencies import get_current_user
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/sync",
@@ -63,6 +62,7 @@ def announce_metadata(
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
 def upload_file(
     file: UploadFile = File(...),
+    version_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -105,10 +105,30 @@ def upload_file(
                 detail=f"No metadata announced for '{remote_path}'. Call /sync/announce first."
             )
 
-        # ── Step 2: Get the latest version (created by /announce) ────────
-        version_record = db.query(models.Version).filter(
-            models.Version.file_id == file_record.id
-        ).order_by(models.Version.version_num.desc()).first()
+        # ── Step 2: Get the target version ───────────────────────────────
+        # Prefer the explicit version_id the client passed (returned by /announce).
+        # Fall back to latest version for backward compatibility.
+        if version_id is not None:
+            version_record = db.query(models.Version).filter(
+                models.Version.id == version_id,
+                models.Version.file_id == file_record.id,
+            ).first()
+            if not version_record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Version {version_id} not found for '{remote_path}'."
+                )
+        else:
+            version_record = db.query(models.Version).filter(
+                models.Version.file_id == file_record.id,
+                models.Version.upload_status.in_([UploadStatus.pending, UploadStatus.uploading]),
+            ).order_by(models.Version.version_num.desc()).first()
+
+            if not version_record:
+                # Last resort: any latest version
+                version_record = db.query(models.Version).filter(
+                    models.Version.file_id == file_record.id
+                ).order_by(models.Version.version_num.desc()).first()
 
         if not version_record:
             raise HTTPException(
@@ -283,16 +303,26 @@ def upload_chunk(
         storage.put_object(chunk_key, chunk_bytes)
 
         # Record chunk in StoredChunk table
+        # Use a savepoint to handle the race condition where two concurrent
+        # uploads of chunks with the same hash both pass the SELECT check.
         stored_chunk = db.query(models.StoredChunk).filter(models.StoredChunk.chunk_hash == chunk_hash).first()
         if not stored_chunk:
-            stored_chunk = models.StoredChunk(
-                chunk_hash=chunk_hash,
-                user_id=user_id,
-                storage_path=chunk_key,
-                size_bytes=chunk_size
-            )
-            db.add(stored_chunk)
-            db.flush()
+            try:
+                with db.begin_nested():  # savepoint — allows rollback without losing the outer tx
+                    stored_chunk = models.StoredChunk(
+                        chunk_hash=chunk_hash,
+                        user_id=user_id,
+                        storage_path=chunk_key,
+                        size_bytes=chunk_size
+                    )
+                    db.add(stored_chunk)
+                    db.flush()
+            except IntegrityError:
+                # Another concurrent request already inserted this chunk — re-fetch it.
+                db.rollback()  # rolls back only to the savepoint
+                stored_chunk = db.query(models.StoredChunk).filter(
+                    models.StoredChunk.chunk_hash == chunk_hash
+                ).first()
 
         # Record in VersionChunk table
         version_chunk = db.query(models.VersionChunk).filter(
@@ -354,8 +384,8 @@ def upload_chunk(
             assembled = True
 
             logger.info(
-                "All %d chunks received for version_id=%d. "
-                "Enqueued assembly job=%s.",
+                "All {} chunks received for version_id={}. "
+                "Enqueued assembly job={}.",
                 total_chunks, version_id, job_id
             )
 
@@ -653,7 +683,7 @@ def download_file(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("download_file failed for '%s': %s", storage_path, e)
+        logger.error("download_file failed for '{}': {}", storage_path, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to download file: {e}"
@@ -711,7 +741,7 @@ def download_chunk(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("download_chunk failed for hash=%s index=%d version_id=%d: %s", file_hash, chunk_index, version_id, e)
+        logger.error("download_chunk failed for hash={} index={} version_id={}: {}", file_hash, chunk_index, version_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to download chunk: {e}"
@@ -874,13 +904,13 @@ def get_conflicts(
                 "conflict_file_id": c_file.id,
                 "optionA": {
                     "device": "Original",
-                    "timestamp": o_latest.client_modified_at.isoformat() if o_latest and o_latest.client_modified_at else "",
+                    "timestamp": (o_latest.announced_at or o_latest.created_at).isoformat() if o_latest else "",
                     "size": f"{o_latest.size_bytes} B" if o_latest else "0 B",
                     "hash": o_latest.hash if o_latest else ""
                 },
                 "optionB": {
                     "device": "Conflicted",
-                    "timestamp": c_latest.client_modified_at.isoformat() if c_latest and c_latest.client_modified_at else "",
+                    "timestamp": (c_latest.announced_at or c_latest.created_at).isoformat() if c_latest else "",
                     "size": f"{c_latest.size_bytes} B" if c_latest else "0 B",
                     "hash": c_latest.hash if c_latest else ""
                 }
@@ -894,8 +924,7 @@ def resolve_conflict(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    from app.services.metadata import _fire_event
-    
+    # _fire_event is already imported at module level (line 16)
     o_file = db.query(models.File).filter(models.File.id == req.original_file_id, models.File.user_id == current_user.id).first()
     c_file = db.query(models.File).filter(models.File.id == req.conflict_file_id, models.File.user_id == current_user.id).first()
     

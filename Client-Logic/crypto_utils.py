@@ -1,8 +1,8 @@
 """
 crypto_utils.py — Client-Side Zero-Knowledge Encryption Utilities
 
-This module handles PBKDF2-HMAC-SHA256 password-based key derivation 
-and AES-256-GCM authenticated encryption/decryption routines for secure 
+This module handles PBKDF2-HMAC-SHA256 password-based key derivation
+and AES-256-GCM authenticated encryption/decryption routines for secure
 file chunking.
 
 Wire format per encrypted chunk:
@@ -11,7 +11,9 @@ Wire format per encrypted chunk:
 
 import hashlib
 import os
-from typing import Optional, Tuple
+import zlib
+from typing import Optional
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # ─── Cryptographic Constants ─────────────────────────────────────────────────
@@ -27,9 +29,9 @@ def derive_key(passphrase: str, email: str) -> bytes:
     """
     Derives a cryptographically strong 256-bit AES key from a user passphrase.
 
-    Utilizes the user's normalized email address as a globally unique, 
+    Utilizes the user's normalized email address as a globally unique,
     deterministic salt via PBKDF2-HMAC-SHA256 stretched over 100,000 iterations.
-    This guarantees that identical passphrases generate completely distinct keys 
+    This guarantees that identical passphrases generate completely distinct keys
     across different user accounts without requiring separate salt storage.
 
     Args:
@@ -41,7 +43,7 @@ def derive_key(passphrase: str, email: str) -> bytes:
     """
     normalized_email = email.lower().strip().encode("utf-8")
     salt = hashlib.sha256(normalized_email).digest()
-    
+
     return hashlib.pbkdf2_hmac(
         hash_name="sha256",
         password=passphrase.encode("utf-8"),
@@ -54,10 +56,10 @@ def derive_key(passphrase: str, email: str) -> bytes:
 # ─── Encryption & Decryption Engine ──────────────────────────────────────────
 
 def encrypt_chunk(
-    key: bytes, 
-    plaintext: bytes, 
+    key: bytes,
+    plaintext: bytes,
     nonce: Optional[bytes] = None
-) -> Tuple[bytes, bytes, bytes]:
+) -> tuple[bytes, bytes, bytes]:
     """
     Encrypts a raw file chunk using authenticated AES-256-GCM encryption.
 
@@ -75,14 +77,14 @@ def encrypt_chunk(
     """
     if nonce is None:
         nonce = os.urandom(NONCE_SIZE)
-        
+
     aesgcm = AESGCM(key)
     # The cryptography library natively appends the tag to the ciphertext
     ct_with_tag = aesgcm.encrypt(nonce, plaintext, None)
-    
+
     ciphertext = ct_with_tag[:-TAG_SIZE]
     tag = ct_with_tag[-TAG_SIZE:]
-    
+
     return nonce, tag, ciphertext
 
 
@@ -97,7 +99,7 @@ def decrypt_chunk(key: bytes, nonce: bytes, tag: bytes, ciphertext: bytes) -> by
         ciphertext (bytes): The raw encrypted static payload.
 
     Raises:
-        cryptography.exceptions.InvalidTag: If the cipher text, tag, or nonce 
+        cryptography.exceptions.InvalidTag: If the cipher text, tag, or nonce
             fails mathematical verification, indicating corruption or tampering.
 
     Returns:
@@ -127,7 +129,7 @@ def pack_encrypted(nonce: bytes, tag: bytes, ciphertext: bytes) -> bytes:
     return nonce + tag + ciphertext
 
 
-def unpack_encrypted(data: bytes) -> Tuple[bytes, bytes, bytes]:
+def unpack_encrypted(data: bytes) -> tuple[bytes, bytes, bytes]:
     """
     Deserializes a unified wire-format byte packet back into separate components.
 
@@ -141,3 +143,37 @@ def unpack_encrypted(data: bytes) -> Tuple[bytes, bytes, bytes]:
             - ciphertext (bytes): Extracted raw ciphertext body.
     """
     return data[:NONCE_SIZE], data[NONCE_SIZE:HEADER_SIZE], data[HEADER_SIZE:]
+
+
+# ─── Compression Utilities ───────────────────────────────────────────────────
+
+# Compression header flags
+COMPRESSION_NONE: int = 0x00
+COMPRESSION_ZLIB: int = 0x01
+
+def compress_before_encrypt(data: bytes, level: int = 6) -> bytes:
+    """
+    Compress data using zlib before encryption.
+    Prepends a 1-byte header indicating compression method.
+    If compressed data is larger than original, returns uncompressed with NONE flag.
+
+    Wire format: [1-byte flag] [payload]
+    """
+    compressed = zlib.compress(data, level)
+    if len(compressed) >= len(data):
+        return bytes([COMPRESSION_NONE]) + data
+    return bytes([COMPRESSION_ZLIB]) + compressed
+
+
+def decompress_after_decrypt(data: bytes) -> bytes:
+    """
+    Decompress data after decryption.
+    Reads the 1-byte header to determine decompression method.
+    """
+    if len(data) == 0:
+        return data
+    flag = data[0]
+    payload = data[1:]
+    if flag == COMPRESSION_ZLIB:
+        return zlib.decompress(payload)
+    return payload  # COMPRESSION_NONE — return as-is

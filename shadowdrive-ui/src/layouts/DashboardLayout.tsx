@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getToken, apiFetch, setToken } from '../lib/api';
+import { getToken, apiFetch, setToken, getOrFetchToken } from '../lib/api';
 import Badge from '../components/Badge';
+import Card from '../components/Card';
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -13,14 +14,20 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
   const [storage, setStorage] = useState({ used: 0, total: 1000 });
   const [conflictsCount, setConflictsCount] = useState(0);
+  const [showConfirmLogout, setShowConfirmLogout] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(!getToken());
 
   useEffect(() => {
-    if (!getToken()) {
-      navigate('/auth');
-      return;
-    }
+    async function verifyAuthAndFetchStats() {
+      if (!getToken()) {
+        const token = await getOrFetchToken();
+        if (!token) {
+          navigate('/auth');
+          return;
+        }
+        setCheckingAuth(false);
+      }
 
-    async function fetchStats() {
       try {
         const [metadata, authData] = await Promise.all([
           apiFetch('/sync/metadata'),
@@ -39,12 +46,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         console.error('Failed to fetch dashboard stats', e);
       }
     }
-    fetchStats();
+    verifyAuthAndFetchStats();
   }, [location.pathname, navigate]);
 
   const menuItems = [
     { path: '/vault', label: 'Vault', icon: 'folder' },
     { path: '/vault/history', label: 'Version History', icon: 'history' },
+    { path: '/transfers', label: 'Transfers', icon: 'swap_vert' },
     { path: '/conflicts', label: 'Conflicts', icon: 'warning', badge: conflictsCount > 0 ? conflictsCount : undefined },
     { path: '/health', label: 'System Health', icon: 'monitoring' },
   ];
@@ -67,6 +75,14 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     }
     return "flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container transition-all font-body-md text-body-md cursor-pointer";
   };
+
+  if (checkingAuth) {
+    return (
+      <div className="w-full h-screen flex items-center justify-center bg-background">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="bg-surface-container-lowest text-on-surface min-h-screen flex flex-col md:flex-row overflow-x-hidden antialiased selection:bg-primary selection:text-on-primary">
@@ -148,8 +164,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
           <button
             onClick={() => {
-              setToken(null);
-              navigate('/auth');
+              setShowConfirmLogout(true);
             }}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-error hover:bg-error/10 transition-all font-body-md text-body-md cursor-pointer border border-error/20"
           >
@@ -165,6 +180,47 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           {children}
         </div>
       </div>
+
+      {showConfirmLogout && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <Card variant="glass" className="w-full max-w-sm p-6 border border-white/10 text-center space-y-6">
+            <div className="mx-auto w-12 h-12 rounded-full bg-error/10 border border-error/20 flex items-center justify-center text-error">
+              <span className="material-symbols-outlined text-2xl">logout</span>
+            </div>
+            <div className="space-y-2">
+              <h3 className="font-headline-sm text-headline-sm text-white font-bold">
+                Sign Out Session
+              </h3>
+              <p className="text-on-surface-variant font-body-md text-sm leading-relaxed">
+                Are you sure you want to sign out? This will stop background client sync and watcher services.
+              </p>
+            </div>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setShowConfirmLogout(false)}
+                className="flex-1 py-3 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white font-label-md text-label-md transition-all cursor-pointer border border-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setShowConfirmLogout(false);
+                  try {
+                    await fetch('http://127.0.0.1:8001/api/auth/logout', { method: 'POST' });
+                  } catch (e) {
+                    console.error('Failed to notify local client of logout:', e);
+                  }
+                  setToken(null);
+                  navigate('/auth');
+                }}
+                className="flex-1 py-3 px-4 rounded-lg bg-error hover:opacity-90 text-on-error-container font-label-md text-label-md transition-all cursor-pointer font-bold"
+              >
+                Sign Out
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

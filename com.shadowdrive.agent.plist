@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.shadowdrive.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$HOME/.local/share/shadowdrive/venv/bin/python</string>
+        <string>-m</string>
+        <string>main</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$HOME/.local/share/shadowdrive</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$HOME/.config/shadowdrive/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/.config/shadowdrive/logs/stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$HOME/.local/share/shadowdrive/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

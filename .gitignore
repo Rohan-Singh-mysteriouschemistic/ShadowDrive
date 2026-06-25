@@ -13,6 +13,10 @@ env/
 _bmad
 .agent
 .gemini
+.zed
+.codex
+.cursor
+config
 
 # Database files (Don't upload your local DB)
 *.sqlite3
@@ -21,6 +25,7 @@ minio_data/
 .obsidian
 Project_Knowledge.txt
 skills-lock.json
+.venv
 
 
 

@@ -3,16 +3,17 @@ network_client.py — HTTP transport layer for ShadowDrive++ client (Week 6+)
 Handles bidirectional payload transfers with Shabd's backend API.
 """
 
-import os
-import logging
-import sqlite3
 import json
+import os
+import sqlite3
+import sys
+import threading
 from typing import Optional
-import requests
-import config
-import resilient_http
 
-logger = logging.getLogger(__name__)
+import config
+import requests
+import resilient_http
+from loguru import logger
 
 try:
     import keyring
@@ -27,11 +28,11 @@ def _get_secure_file_setting(key: str) -> Optional[str]:
     if not os.path.exists(filepath):
         return None
     try:
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             data = json.load(f)
         return data.get(key)
     except Exception as e:
-        logger.error("Failed to read secure keys file: %s", e)
+        logger.error("Failed to read secure keys file: {}", e)
         return None
 
 
@@ -43,16 +44,16 @@ def _save_secure_file_setting(key: str, value: Optional[str]):
         data = {}
         if os.path.exists(filepath):
             try:
-                with open(filepath, "r") as f:
+                with open(filepath) as f:
                     data = json.load(f)
             except Exception:
                 pass
-        
+
         if value is None:
             data.pop(key, None)
         else:
             data[key] = value
-        
+
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         mode = 0o600
         fd = os.open(filepath, flags, mode)
@@ -60,7 +61,7 @@ def _save_secure_file_setting(key: str, value: Optional[str]):
             json.dump(data, f)
         os.chmod(filepath, 0o600)
     except Exception as e:
-        logger.error("Failed to write secure keys file: %s", e)
+        logger.error("Failed to write secure keys file: {}", e)
 
 
 def _get_secure_setting(key: str) -> Optional[str]:
@@ -70,11 +71,18 @@ def _get_secure_setting(key: str) -> Optional[str]:
             if val is not None:
                 return val
         except Exception as e:
-            logger.debug("keyring.get_password failed for key '%s': %s", key, e)
+            logger.debug("keyring.get_password failed for key '{}': {}", key, e)
     return _get_secure_file_setting(key)
 
 
 def _save_secure_setting(key: str, value: Optional[str]):
+    # Synchronize memory settings cache
+    with _settings_cache_lock:
+        if value is None:
+            _settings_cache.pop(key, None)
+        else:
+            _settings_cache[key] = value
+
     saved_in_keyring = False
     if keyring is not None:
         try:
@@ -87,8 +95,8 @@ def _save_secure_setting(key: str, value: Optional[str]):
                 keyring.set_password("shadowdrive", key, value)
             saved_in_keyring = True
         except Exception as e:
-            logger.debug("keyring action failed for key '%s': %s", key, e)
-            
+            logger.debug("keyring action failed for key '{}': {}", key, e)
+
     if not saved_in_keyring:
         _save_secure_file_setting(key, value)
 
@@ -96,9 +104,6 @@ def _save_secure_setting(key: str, value: Optional[str]):
 # ─── Settings Database Helpers ───────────────────────────────────────────────
 
 # ─── Settings Cache & Encryption ──────────────────────────────────────────────
-
-import sys
-import threading
 
 _settings_cache = {}
 _settings_cache_lock = threading.Lock()
@@ -114,7 +119,7 @@ def _encrypt_val(key: str, val: str) -> str:
             encrypted_bytes = win32crypt.CryptProtectData(val.encode('utf-8'), "ShadowDriveKey", None, None, None, 0)
             return "dpapi:" + encrypted_bytes.hex()
         except Exception as e:
-            logger.error("DPAPI encryption failed for '%s': %s", key, e)
+            logger.error("DPAPI encryption failed for '{}': {}", key, e)
             return val
     return val
 
@@ -132,7 +137,7 @@ def _decrypt_val(key: str, val: str) -> str:
                 desc, decrypted_bytes = win32crypt.CryptUnprotectData(encrypted_bytes, None, None, None, 0)
                 return decrypted_bytes.decode('utf-8')
             except Exception as e:
-                logger.error("DPAPI decryption failed for '%s': %s", key, e)
+                logger.error("DPAPI decryption failed for '{}': {}", key, e)
                 return val
     return val
 
@@ -143,6 +148,12 @@ def _load_settings_cache_if_needed():
     if not _settings_loaded:
         with _settings_cache_lock:
             if not _settings_loaded:
+                # Preload secure settings directly from key storage
+                for key in ("jwt_token", "encryption_key", "user_email"):
+                    val = _get_secure_setting(key)
+                    if val is not None:
+                        _settings_cache[key] = val
+
                 if os.path.exists(config.DB_PATH):
                     try:
                         conn = sqlite3.connect(config.DB_PATH, timeout=30.0)
@@ -154,7 +165,7 @@ def _load_settings_cache_if_needed():
                             _settings_cache[k] = v
                         conn.close()
                     except Exception as e:
-                        logger.error("Failed to preload settings cache: %s", e)
+                        logger.error("Failed to preload settings cache: {}", e)
                 _settings_loaded = True
 
 
@@ -168,12 +179,12 @@ def _get_setting(key: str) -> Optional[str]:
 def _save_setting(key: str, value: str):
     """Saves a key/value pair to the cache and the local SQLite settings table."""
     _load_settings_cache_if_needed()
-    
+
     with _settings_cache_lock:
         _settings_cache[key] = value
-        
+
     db_value = _encrypt_val(key, value)
-    
+
     if key in ("encryption_key", "jwt_token"):
         _save_secure_setting(key, value)
         return
@@ -185,7 +196,7 @@ def _save_setting(key: str, value: str):
         conn.commit()
         conn.close()
     except Exception as e:
-        logger.error("Failed to save setting '%s': %s", key, e)
+        logger.error("Failed to save setting '{}': {}", key, e)
 
 
 def _get_token() -> Optional[str]:
@@ -209,14 +220,14 @@ def _clear_device():
         cur.execute("DELETE FROM settings WHERE key = 'device_id'")
         conn.commit()
         conn.close()
-    except Exception as e:
+    except Exception:
         pass
 
 
 def _request(method: str, endpoint: str, **kwargs) -> requests.Response:
     """Wrapper around requests.Session.request to inject auth headers and handle 401."""
     url = f"{config.SERVER_BASE_URL}{endpoint}"
-    
+
     token = _get_token()
     headers = kwargs.pop("headers", {})
     if token and "Authorization" not in headers:
@@ -238,8 +249,8 @@ def _request(method: str, endpoint: str, **kwargs) -> requests.Response:
             if current_token:
                 refresh_headers = {"Authorization": f"Bearer {current_token}"}
                 refresh_resp = resilient_http.request(
-                    "POST", 
-                    f"{config.SERVER_BASE_URL}/auth/refresh", 
+                    "POST",
+                    f"{config.SERVER_BASE_URL}/auth/refresh",
                     headers=refresh_headers
                 )
                 if refresh_resp.status_code == 200:
@@ -250,9 +261,9 @@ def _request(method: str, endpoint: str, **kwargs) -> requests.Response:
                         headers["Authorization"] = f"Bearer {new_token}"
                         kwargs["headers"] = headers
                         return resilient_http.request(method, url, **kwargs)
-        
+
         # If refresh fails or no token, suspend sync
-        print("[AUTH ERROR] Unauthorized (401) and refresh failed. Sync has been suspended. Please login again.")
+        logger.error("[AUTH ERROR] Unauthorized (401) and refresh failed. Sync has been suspended. Please login again.")
         config.sync_suspended = True
 
     return resp
@@ -284,7 +295,7 @@ def register_user(username: str, email: str, password: str) -> tuple[bool, str]:
                 detail = resp.text or "Registration failed."
             return False, f"Registration failed: {detail}"
     except requests.RequestException as e:
-        logger.error("Registration request failed: %s", e)
+        logger.error("Registration request failed: {}", e)
         return False, f"Network error: {e}"
 
 
@@ -301,13 +312,13 @@ def login_user(email: str, password: str) -> tuple[bool, str]:
             token = resp.json().get("access_token")
             if token:
                 _save_token(token)
-                
+
                 # Register device to get a valid device_id from server
                 me_resp = resilient_http.request("GET", f"{config.SERVER_BASE_URL}/auth/me", headers={"Authorization": f"Bearer {token}"}, timeout=10)
                 if me_resp.status_code == 200:
                     user_id = me_resp.json().get("id")
-                    import platform
                     import hashlib
+                    import platform
                     dir_hash = hashlib.md5(config.DB_PATH.encode()).hexdigest()[:6]
                     device_name = f"{platform.node()}-{dir_hash}-client"
                     dev_payload = {"user_id": user_id, "device_name": device_name}
@@ -315,13 +326,13 @@ def login_user(email: str, password: str) -> tuple[bool, str]:
                     if dev_resp.status_code in [200, 201]:
                         device_id = dev_resp.json().get("id")
                         _save_setting("device_id", str(device_id))
-                        logger.info("Successfully registered device with server: %s", device_id)
-                        print(f"Successfully registered device with server: {device_id}")
+                        logger.info("Successfully registered device with server: {}", device_id)
+                        logger.info("Successfully registered device with server: {}", device_id)
                     else:
-                        print(f"FAILED to register device: {dev_resp.status_code} {dev_resp.text}")
+                        logger.error("FAILED to register device: {} {}", dev_resp.status_code, dev_resp.text)
                 else:
-                    print(f"FAILED to get /auth/me: {me_resp.status_code} {me_resp.text}")
-                
+                    logger.error("FAILED to get /auth/me: {} {}", me_resp.status_code, me_resp.text)
+
                 config.sync_suspended = False
                 return True, "Login successful."
             else:
@@ -333,7 +344,7 @@ def login_user(email: str, password: str) -> tuple[bool, str]:
                 detail = resp.text or "Invalid email or password."
             return False, f"Login failed: {detail}"
     except requests.RequestException as e:
-        logger.error("Login request failed: %s", e)
+        logger.error("Login request failed: {}", e)
         return False, f"Network error: {e}"
 
 
@@ -345,7 +356,7 @@ def health_check() -> bool:
         resp = resilient_http.request("GET", f"{config.SERVER_BASE_URL}/health", timeout=5)
         return resp.status_code == 200
     except requests.RequestException as e:
-        logger.warning("Health check failed: %s", e)
+        logger.warning("Health check failed: {}", e)
         return False
 
 
@@ -356,7 +367,7 @@ def send_heartbeat(device_id: int) -> tuple[bool, list]:
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:
-        logger.debug("Heartbeat failed: %s", e)
+        logger.debug("Heartbeat failed: {}", e)
         return False, []
 
 def ack_command(device_id: int, command_id: int) -> bool:
@@ -392,28 +403,33 @@ def announce_metadata(relative_path: str, file_hash: str, event_type: str,
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("Metadata announcement failed for %s: %s", relative_path, e)
+        logger.error("Metadata announcement failed for {}: {}", relative_path, e)
         return False, {}
 
 
-def upload_file(relative_path: str, local_path: str, data: bytes = None) -> tuple[bool, dict]:
+def upload_file(relative_path: str, local_path: str, data: bytes = None, version_id: int = None) -> tuple[bool, dict]:
     """Single-shot upload handler. If *data* is provided, those bytes are sent
-    instead of reading from *local_path* (used for encrypted uploads)."""
+    instead of reading from *local_path* (used for encrypted uploads).
+    Pass *version_id* (from /announce) so the server targets the exact version."""
     try:
+        extra_fields = {}
+        if version_id is not None:
+            extra_fields["version_id"] = str(version_id)
+
         if data is not None:
             import io
             files = {"file": (relative_path, io.BytesIO(data), "application/octet-stream")}
-            resp = _request("POST", "/sync/upload", files=files, timeout=120)
+            resp = _request("POST", "/sync/upload", files=files, data=extra_fields, timeout=120)
         else:
             if not os.path.exists(local_path):
                 return False, {}
             with open(local_path, "rb") as f:
                 files = {"file": (relative_path, f, "application/octet-stream")}
-                resp = _request("POST", "/sync/upload", files=files, timeout=120)
+                resp = _request("POST", "/sync/upload", files=files, data=extra_fields, timeout=120)
         resp.raise_for_status()
         return True, resp.json()
     except (requests.RequestException, OSError) as e:
-        logger.error("Single-shot upload failed for %s: %s", relative_path, e)
+        logger.error("Single-shot upload failed for {}: {}", relative_path, e)
         return False, {}
 
 
@@ -442,7 +458,7 @@ def upload_chunk(local_path: str, offset: int, chunk_size: int, chunk_index: int
         resp.raise_for_status()
         return True, resp.json()
     except (requests.RequestException, OSError) as e:
-        logger.error("Chunk upload failed (index=%d/%d): %s", chunk_index, total_chunks, e)
+        logger.error("Chunk upload failed (index={}/{}): {}", chunk_index, total_chunks, e)
         return False, {}
 
 
@@ -455,7 +471,7 @@ def get_upload_status(version_id: int) -> tuple[bool, dict]:
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("Failed to get upload status for version %d: %s", version_id, e)
+        logger.error("Failed to get upload status for version {}: {}", version_id, e)
         return False, {}
 
 
@@ -466,7 +482,7 @@ def get_server_metadata() -> tuple[bool, list]:
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("Failed to fetch server metadata manifest: %s", e)
+        logger.error("Failed to fetch server metadata manifest: {}", e)
         return False, []
 
 
@@ -482,7 +498,7 @@ def get_metadata_diff(device_id: int) -> tuple[bool, dict]:
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("Failed to fetch metadata diff: %s", e)
+        logger.error("Failed to fetch metadata diff: {}", e)
         return False, {}
 
 
@@ -494,7 +510,7 @@ def download_file(storage_path: str) -> tuple[bool, bytes]:
         resp.raise_for_status()
         return True, resp.content
     except requests.RequestException as e:
-        logger.error("Failed downloading single-shot file %s: %s", storage_path, e)
+        logger.error("Failed downloading single-shot file {}: {}", storage_path, e)
         return False, b""
 
 
@@ -510,7 +526,7 @@ def download_chunk(file_hash: str, chunk_index: int, version_id: int) -> tuple[b
         resp.raise_for_status()
         return True, resp.content
     except requests.RequestException as e:
-        logger.error("Failed downloading chunk %d for hash %s: %s", chunk_index, file_hash, e)
+        logger.error("Failed downloading chunk {} for hash {}: {}", chunk_index, file_hash, e)
         return False, b""
 
 
@@ -526,5 +542,5 @@ def ack_sync(device_id: int, file_id: int, version_id: int) -> tuple[bool, dict]
         resp.raise_for_status()
         return True, resp.json()
     except requests.RequestException as e:
-        logger.error("Failed to ack sync for file_id=%d version_id=%d: %s", file_id, version_id, e)
+        logger.error("Failed to ack sync for file_id={} version_id={}: {}", file_id, version_id, e)
         return False, {}

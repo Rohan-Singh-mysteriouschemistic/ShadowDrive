@@ -15,17 +15,16 @@ Architecture:
                          RetryPolicy + CircuitBreaker
 """
 
-import time
 import random
-import logging
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Callable
+from typing import Optional
 
 import requests
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class CircuitState(Enum):
@@ -86,8 +85,8 @@ class CircuitBreaker:
             if self._failure_count >= self.failure_threshold:
                 self._state = CircuitState.OPEN
                 logger.warning(
-                    "[CIRCUIT] OPEN — %d consecutive failures. "
-                    "Blocking requests for %ds.",
+                    "[CIRCUIT] OPEN — {} consecutive failures. "
+                    "Blocking requests for {}s.",
                     self._failure_count, self.recovery_timeout,
                 )
 
@@ -157,7 +156,7 @@ def request(
     for attempt in range(1, p.max_retries + 1):
         # Circuit breaker check
         if not _circuit.allow_request():
-            logger.warning("[CIRCUIT] Open. Failing fast for %s %s.", method, url)
+            logger.warning("[CIRCUIT] Open. Failing fast for {} {}.", method, url)
             raise CircuitBreakerOpen("Circuit breaker is OPEN. Server is unreachable.", request=None, response=None)
 
         try:
@@ -177,7 +176,7 @@ def request(
             last_exception = exc
             _circuit.record_failure()
 
-        except Exception as exc:
+        except Exception:
             # Non-retryable exception (e.g., invalid URL, SSL error)
             _circuit.record_failure()
             raise
@@ -194,8 +193,8 @@ def request(
             on_retry(attempt, delay, last_exception)
         else:
             logger.warning(
-                "[RETRY] Attempt %d/%d for %s %s failed: %s. "
-                "Retrying in %.1fs.",
+                "[RETRY] Attempt {}/{} for {} {} failed: {}. "
+                "Retrying in {:.1f}s.",
                 attempt, p.max_retries, method, url, last_exception, delay,
             )
 
@@ -203,7 +202,7 @@ def request(
 
     # All retries exhausted
     logger.error(
-        "[FAILED] All %d attempts exhausted for %s %s. Last error: %s",
+        "[FAILED] All {} attempts exhausted for {} {}. Last error: {}",
         p.max_retries, method, url, last_exception,
     )
     raise last_exception

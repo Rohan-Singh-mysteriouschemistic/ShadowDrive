@@ -30,9 +30,10 @@ import os
 import io
 import json
 import hashlib
-import logging
+import sys
 from datetime import datetime, timezone
 
+from loguru import logger
 from redis import Redis
 from rq import Queue
 from sqlalchemy import create_engine
@@ -41,8 +42,8 @@ from sqlalchemy.orm import sessionmaker
 from app import storage
 from app.models import Version, ChunkUpload, UploadStatus
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logger.remove()
+logger.add(sys.stderr, level="INFO")
 
 # ─── Redis Connection ────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -86,7 +87,7 @@ def _notify_completion(version: Version, status_str: str):
     }
     redis_conn.publish("shadowdrive:events", json.dumps(notification))
     logger.info(
-        "Published %s event to Redis for file='%s' (user_id=%d)",
+        "Published {} event to Redis for file='{}' (user_id={})",
         notification["type"], version.file.file_path, version.file.user_id
     )
 
@@ -112,7 +113,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
     try:
         version = db.query(Version).filter(Version.id == version_id).first()
         if not version:
-            logger.error("verify_file_hash: version_id=%d not found", version_id)
+            logger.error("verify_file_hash: version_id={} not found", version_id)
             return {"status": "error", "reason": "version_not_found"}
 
         # ── Download from MinIO and compute SHA-256 ──────────────────────
@@ -120,7 +121,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
             file_bytes = storage.get_object(version.storage_path)
         except Exception as e:
             logger.error(
-                "verify_file_hash: MinIO read failed for '%s': %s",
+                "verify_file_hash: MinIO read failed for '{}': {}",
                 version.storage_path, e
             )
             version.upload_status = UploadStatus.failed
@@ -135,7 +136,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
             db.commit()
             _notify_completion(version, "complete")
             logger.info(
-                "verify_file_hash: version_id=%d PASSED (hash=%s, %d bytes)",
+                "verify_file_hash: version_id={} PASSED (hash={}, {} bytes)",
                 version_id, actual_hash, len(file_bytes)
             )
             return {
@@ -149,8 +150,8 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
             db.commit()
             _notify_completion(version, "failed")
             logger.warning(
-                "verify_file_hash: version_id=%d FAILED — "
-                "expected %s, got %s",
+                "verify_file_hash: version_id={} FAILED — "
+                "expected {}, got {}",
                 version_id, expected_hash, actual_hash
             )
             return {
@@ -171,7 +172,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
                 _notify_completion(version, "failed")
         except Exception:
             db.rollback()
-        logger.exception("verify_file_hash: unhandled error for version_id=%d", version_id)
+        logger.exception("verify_file_hash: unhandled error for version_id={}", version_id)
         raise exc
     finally:
         db.close()
@@ -201,7 +202,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
     try:
         version = db.query(Version).filter(Version.id == version_id).first()
         if not version:
-            logger.error("assemble_and_verify: version_id=%d not found", version_id)
+            logger.error("assemble_and_verify: version_id={} not found", version_id)
             return {"status": "error", "reason": "version_not_found"}
 
         # ── Step 1: Gather chunk keys in order ───────────────────────────
@@ -225,7 +226,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         try:
             total_bytes = storage.assemble_chunks(chunk_keys, final_key)
         except Exception as e:
-            logger.error("assemble_and_verify: assembly failed: %s", e)
+            logger.error("assemble_and_verify: assembly failed: {}", e)
             version.upload_status = UploadStatus.failed
             db.commit()
             _notify_completion(version, "failed")
@@ -243,7 +244,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         try:
             file_bytes = storage.get_object(final_key)
         except Exception as e:
-            logger.error("assemble_and_verify: re-read failed: %s", e)
+            logger.error("assemble_and_verify: re-read failed: {}", e)
             version.upload_status = UploadStatus.failed
             db.commit()
             _notify_completion(version, "failed")
@@ -256,8 +257,8 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
             db.commit()
             _notify_completion(version, "complete")
             logger.info(
-                "assemble_and_verify: version_id=%d PASSED "
-                "(%d chunks, %d bytes, hash=%s)",
+                "assemble_and_verify: version_id={} PASSED "
+                "({} chunks, {} bytes, hash={})",
                 version_id, len(all_chunks), total_bytes, actual_hash
             )
             return {
@@ -272,8 +273,8 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
             db.commit()
             _notify_completion(version, "failed")
             logger.warning(
-                "assemble_and_verify: version_id=%d hash MISMATCH — "
-                "expected %s, got %s",
+                "assemble_and_verify: version_id={} hash MISMATCH — "
+                "expected {}, got {}",
                 version_id, expected_hash, actual_hash
             )
             return {
@@ -293,7 +294,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         except Exception:
             db.rollback()
         logger.exception(
-            "assemble_and_verify: unhandled error for version_id=%d",
+            "assemble_and_verify: unhandled error for version_id={}",
             version_id
         )
         raise exc
@@ -305,20 +306,27 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
 
 def enqueue_verify(version_id: int, expected_hash: str) -> str:
     """Push a verify_file_hash job onto the queue. Returns the RQ job ID."""
-    job = task_queue.enqueue(
+    # Create a fresh Redis connection per enqueue to avoid stale connection issues
+    # (module-level connections can time out between uploads in long-running sessions)
+    conn = Redis.from_url(REDIS_URL)
+    q = Queue(QUEUE_NAME, connection=conn)
+    job = q.enqueue(
         verify_file_hash,
         version_id,
         expected_hash,
         job_timeout="10m",
         retry=None,
     )
-    logger.info("Enqueued verify_file_hash job=%s for version_id=%d", job.id, version_id)
+    logger.info("Enqueued verify_file_hash job={} for version_id={}", job.id, version_id)
     return job.id
 
 
 def enqueue_assemble_and_verify(version_id: int, expected_hash: str) -> str:
     """Push an assemble_and_verify_chunks job onto the queue. Returns the RQ job ID."""
-    job = task_queue.enqueue(
+    # Create a fresh Redis connection per enqueue to avoid stale connection issues
+    conn = Redis.from_url(REDIS_URL)
+    q = Queue(QUEUE_NAME, connection=conn)
+    job = q.enqueue(
         assemble_and_verify_chunks,
         version_id,
         expected_hash,
@@ -326,7 +334,7 @@ def enqueue_assemble_and_verify(version_id: int, expected_hash: str) -> str:
         retry=None,
     )
     logger.info(
-        "Enqueued assemble_and_verify job=%s for version_id=%d",
+        "Enqueued assemble_and_verify job={} for version_id={}",
         job.id, version_id
     )
     return job.id
