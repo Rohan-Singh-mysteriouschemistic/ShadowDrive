@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import Card from '../components/Card';
-import { setToken } from '../lib/api';
+import { setToken, CLIENT_API_URL } from '../lib/api';
 
 const fadeIn = (delay: number) => ({
   initial:    { opacity: 0, y: 20 },
@@ -58,6 +58,39 @@ export default function AuthScreen() {
     const password = formData.get('password') as string;
     const passphrase = formData.get('passphrase') as string;
 
+    if (!email) {
+      setError("Identity [Email] is required.");
+      setLoading(false);
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError("Please enter a valid email address (e.g., user@example.com).");
+      setLoading(false);
+      return;
+    }
+
+    if (!password) {
+      setError("Password is required.");
+      setLoading(false);
+      return;
+    }
+
+    if (!isLogin) {
+      const confirmPassword = formData.get('confirm-password') as string;
+      if (!confirmPassword) {
+        setError("Please verify your password.");
+        setLoading(false);
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        setLoading(false);
+        return;
+      }
+    }
+
     if (!passphrase) {
       setError("Encryption Passphrase is required. Please fill it to secure your vault.");
       setLoading(false);
@@ -65,7 +98,7 @@ export default function AuthScreen() {
     }
 
     try {
-      const endpoint = isLogin ? 'http://127.0.0.1:8001/api/auth/login' : 'http://127.0.0.1:8001/api/auth/register';
+      const endpoint = isLogin ? `${CLIENT_API_URL}/api/auth/login` : `${CLIENT_API_URL}/api/auth/register`;
       const body = isLogin
         ? { email, password, passphrase }
         : { email, password, username: email.split('@')[0], passphrase };

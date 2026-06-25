@@ -18,7 +18,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -120,6 +120,11 @@ def login(req: AuthRequest):
     if not req.email or not req.password:
         raise HTTPException(status_code=400, detail="Email and password required.")
 
+    # Initialize config paths and DB first so credentials/device ID go to correct DB
+    config.update_user_config(req.email)
+    from diff_engine import ensure_db
+    ensure_db()
+
     # Prevent cross-user device conflicts by clearing old device ID on user change
     network_client._clear_device()
 
@@ -130,7 +135,7 @@ def login(req: AuthRequest):
     # Persist the active user email securely
     network_client._save_secure_setting("user_email", req.email)
 
-    # Dynamically update settings database/watch paths & restart services
+    # Restart services under isolated user context
     _restart_services(req.email)
 
     token = network_client._get_token()
@@ -143,6 +148,11 @@ def login(req: AuthRequest):
 def register(req: AuthRequest):
     if not req.email or not req.password or not req.username:
         raise HTTPException(status_code=400, detail="Username, email, and password required.")
+
+    # Initialize config paths and DB first so credentials/device ID go to correct DB
+    config.update_user_config(req.email)
+    from diff_engine import ensure_db
+    ensure_db()
 
     network_client._clear_device()
 
@@ -316,4 +326,5 @@ def shutdown_event():
 
 if __name__ == "__main__":
     port = int(os.environ.get("API_PORT", 8001))
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    host = os.environ.get("API_HOST", "127.0.0.1")
+    uvicorn.run(app, host=host, port=port)

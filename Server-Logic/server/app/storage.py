@@ -116,6 +116,18 @@ def get_object(key: str) -> bytes:
     return data
 
 
+def get_object_stream(key: str):
+    """Retrieve an S3 object from MinIO as a streaming body.
+
+    Returns the botocore.response.StreamingBody object.
+    Raises:
+        ClientError: If the key does not exist.
+    """
+    s3 = _get_s3_client()
+    response = s3.get_object(Bucket=MINIO_BUCKET, Key=key)
+    return response["Body"]
+
+
 def delete_object(key: str):
     """Delete an object from MinIO.  No-op if the key doesn't exist."""
     s3 = _get_s3_client()
@@ -126,10 +138,8 @@ def delete_object(key: str):
 def assemble_chunks(chunk_keys: list[str], final_key: str) -> int:
     """Download chunk objects, concatenate them, and upload the result.
 
-    This is the server-side assembly step after all chunks for a file
-    have been received.  Each chunk key is downloaded, concatenated in
-    order, and the result is uploaded to final_key.  The individual
-    chunk objects are then deleted.
+    Uses a disk-backed TemporaryFile to avoid buffering the entire file into RAM,
+    ensuring stability for very large files.
 
     Args:
         chunk_keys: Ordered list of S3 keys for the chunks.
@@ -138,27 +148,35 @@ def assemble_chunks(chunk_keys: list[str], final_key: str) -> int:
     Returns:
         Total assembled size in bytes.
     """
+    import tempfile
     s3 = _get_s3_client()
-    assembled = io.BytesIO()
 
-    for ck in chunk_keys:
-        resp = s3.get_object(Bucket=MINIO_BUCKET, Key=ck)
-        assembled.write(resp["Body"].read())
+    with tempfile.TemporaryFile() as tmp:
+        for ck in chunk_keys:
+            resp = s3.get_object(Bucket=MINIO_BUCKET, Key=ck)
+            while True:
+                data = resp["Body"].read(1024 * 1024)
+                if not data:
+                    break
+                tmp.write(data)
 
-    total_bytes = assembled.tell()
-    assembled.seek(0)
+        total_bytes = tmp.tell()
+        tmp.seek(0)
 
-    s3.put_object(
-        Bucket=MINIO_BUCKET,
-        Key=final_key,
-        Body=assembled,
-        ContentLength=total_bytes,
-    )
+        s3.put_object(
+            Bucket=MINIO_BUCKET,
+            Key=final_key,
+            Body=tmp,
+            ContentLength=total_bytes,
+        )
 
     # Clean up individual chunk objects if they are not stored permanently
     for ck in chunk_keys:
         if not ck.startswith("chunks/"):
-            s3.delete_object(Bucket=MINIO_BUCKET, Key=ck)
+            try:
+                s3.delete_object(Bucket=MINIO_BUCKET, Key=ck)
+            except Exception as e:
+                logger.warning("Failed to delete chunk {}: {}", ck, e)
 
     logger.info("Assembled {} chunks → {} ({} bytes)", len(chunk_keys), final_key, total_bytes)
     return total_bytes

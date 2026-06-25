@@ -87,13 +87,24 @@ def process_metadata_sync(
             return _handle_deletion(db, file_record)
 
         # ── Step 3: Un-delete if path reappears ──────────────────────────────
-        if file_record.is_deleted:
+        was_deleted = file_record.is_deleted
+        if was_deleted:
             file_record.is_deleted = False
 
         # ── Step 4: Hash deduplication ───────────────────────────────────────
         incoming_hash = payload.hash or EMPTY_FILE_SHA256
         dedup_result = _check_hash_dedup(db, file_record, incoming_hash)
         if dedup_result is not None:
+            # If the file was previously deleted and we're restoring it via
+            # hash-dedup (same content re-uploaded), the dedup path skips the
+            # normal event-firing code. We must fire an SSE event here so the
+            # UI and downstream sync clients learn the file is back.
+            if was_deleted:
+                _fire_event(user_id, "file_updated", {
+                    "file_id": file_record.id,
+                    "file_path": file_record.file_path,
+                    "version_id": dedup_result.version_id,
+                })
             return dedup_result
 
         # ── Step 5: 0-byte file fast-path ────────────────────────────────────

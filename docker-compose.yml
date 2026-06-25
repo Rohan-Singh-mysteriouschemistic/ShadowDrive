@@ -1,0 +1,177 @@
+version: '3.8'
+
+services:
+  # The Database (PostgreSQL)
+  db:
+    image: asia-south2-docker.pkg.dev/lyrical-shore-450913-u3/shadowdrive/postgres:15
+    container_name: shadow_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - shadowdrive-network
+
+  # The Storage (MinIO)
+  minio:
+    image: asia-south2-docker.pkg.dev/lyrical-shore-450913-u3/shadowdrive/minio:latest
+    container_name: shadow_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - shadowdrive-network
+
+  # The Job Queue (Redis)
+  redis:
+    image: asia-south2-docker.pkg.dev/lyrical-shore-450913-u3/shadowdrive/redis:7-alpine
+    container_name: shadow_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - shadowdrive-network
+
+  # FastAPI Backend API
+  api:
+    build:
+      context: ./Server-Logic/server
+      dockerfile: Dockerfile
+    container_name: shadow_api
+    command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 2>&1 | tee server.log"
+    restart: on-failure
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://user:SDrive516477%23@db:5432/shadowdrive
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: shadowdrive
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      - ./Server-Logic/server:/app
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - shadowdrive-network
+
+  # RQ Background Worker
+  worker:
+    build:
+      context: ./Server-Logic/server
+      dockerfile: Dockerfile
+    container_name: shadow_worker
+    command: sh -c "rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker 2>&1 | tee worker.log"
+    restart: on-failure
+    environment:
+      DATABASE_URL: postgresql://user:SDrive516477%23@db:5432/shadowdrive
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: shadowdrive
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      - ./Server-Logic/server:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - shadowdrive-network
+
+  # Client Agent API
+  client:
+    build:
+      context: ./Client-Logic
+      dockerfile: Dockerfile
+    container_name: shadow_client
+    command: sh -c "python local_api.py 2>&1 | tee client.log"
+    restart: on-failure
+    ports:
+      - "8001:8001"
+    environment:
+      SERVER_URL: http://api:8000
+      API_HOST: 0.0.0.0
+      API_PORT: 8001
+    volumes:
+      - ./Client-Logic:/app
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - shadowdrive-network
+
+  # React Frontend (UI)
+  ui:
+    build:
+      context: ./shadowdrive-ui
+      dockerfile: Dockerfile
+    container_name: shadow_ui
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./shadowdrive-ui:/app
+      - /app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+      client:
+        condition: service_started
+    networks:
+      - shadowdrive-network
+
+volumes:
+  postgres_data:
+  minio_data:
+  redis_data:
+
+networks:
+  shadowdrive-network:
+    name: shadowdrive-network
+    driver: bridge

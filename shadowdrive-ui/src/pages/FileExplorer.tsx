@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFiles, useUploadFile, useDeleteFile } from '../hooks/useFiles';
 import { useEventInvalidation } from '../hooks/useEvents';
-import { getDownloadUrl, apiFetch } from '../lib/api';
+import { getDownloadUrl, apiFetch, CLIENT_API_URL } from '../lib/api';
 import { useQuery } from '@tanstack/react-query';
 import Button from '../components/Button';
 import PageHeader from '../components/PageHeader';
@@ -36,7 +36,7 @@ export default function FileExplorer() {
   useEffect(() => {
     const fetchTransfers = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8001/api/transfers');
+        const res = await fetch(`${CLIENT_API_URL}/api/transfers`);
         if (res.ok) {
           const data = await res.json();
           setTransfers(data.transfers || []);
@@ -101,6 +101,16 @@ export default function FileExplorer() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const fileExists = files.some(
+      (f: any) => f.file_path === file.name
+    );
+    if (fileExists) {
+      alert("A file with this name is already present.");
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     try {
       await uploadMutation.mutateAsync({ file, remotePath: file.name });
     } catch (err) {
@@ -132,7 +142,7 @@ export default function FileExplorer() {
     }
     if (isTextFile(file.file_path)) {
       try {
-        const res = await fetch(`http://127.0.0.1:8001/api/download?file_path=${encodeURIComponent(file.file_path)}`);
+        const res = await fetch(`${CLIENT_API_URL}/api/download?file_path=${encodeURIComponent(file.file_path)}`);
         if (res.ok) {
           const text = await res.text();
           setEditingFile({ id: file.id, name: file.file_path, storage_path: file.storage_path, content: text });

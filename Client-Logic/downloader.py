@@ -104,6 +104,11 @@ def _download_file_worker(remote: dict, device_id: int):
             else:
                 _full_download_file(cur, conn, full_local_path, rel_path,
                                     storage_path, remote_hash, version_id, file_id, device_id)
+        else:
+            logger.info("Local file '{}' hash matches remote, skipping content download and updating local metadata to version {}", rel_path, version_id)
+            cur.execute("UPDATE files SET version_id = ? WHERE file_path = ?", (version_id, full_local_path))
+            conn.commit()
+            network_client.ack_sync(device_id, file_id, version_id)
 
         conn.close()
 

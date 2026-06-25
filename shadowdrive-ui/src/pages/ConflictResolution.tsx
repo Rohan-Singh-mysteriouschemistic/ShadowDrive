@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useConflicts, useResolveConflict } from '../hooks/useConflicts';
 import { useEventInvalidation } from '../hooks/useEvents';
+import { CLIENT_API_URL } from '../lib/api';
 import PageHeader from '../components/PageHeader';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -18,7 +19,7 @@ export default function ConflictResolution() {
   const handlePreview = useCallback(async (filePath: string, label: string) => {
     setPreviewContent({ title: `Preview — ${label}`, content: '', isLoading: true });
     try {
-      const res = await fetch(`http://127.0.0.1:8001/api/download?file_path=${encodeURIComponent(filePath)}`);
+      const res = await fetch(`${CLIENT_API_URL}/api/download?file_path=${encodeURIComponent(filePath)}`);
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('text') || contentType.includes('json')) {

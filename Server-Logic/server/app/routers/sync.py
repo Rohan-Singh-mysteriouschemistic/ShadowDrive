@@ -3,7 +3,7 @@ import shutil
 from loguru import logger
 import hashlib
 from fastapi import status, HTTPException, Depends, APIRouter, UploadFile, File, Form
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy import text
@@ -472,6 +472,14 @@ def delete_file(
         raise HTTPException(status_code=404, detail="File not found")
         
     file_record.is_deleted = True
+
+    # Remove all device sync acknowledgements for this file so that if the
+    # same file is re-uploaded (even with identical hash), every device sees it
+    # as 'missing' in /metadata/diff and re-downloads / re-acknowledges it.
+    db.query(models.FileDeviceMap).filter(
+        models.FileDeviceMap.file_id == file_id
+    ).delete()
+
     db.commit()
 
     _fire_event(user_id, "file_deleted", {"file_id": file_id, "file_path": file_record.file_path})
@@ -667,11 +675,11 @@ def download_file(
                 detail=f"No version found for storage_path '{storage_path}'."
             )
 
-        # ── Fetch from MinIO ─────────────────────────────────────────────
-        file_bytes = storage.get_object(storage_path)
+        # ── Fetch from MinIO as stream ───────────────────────────────────
+        body_stream = storage.get_object_stream(storage_path)
 
-        return Response(
-            content=file_bytes,
+        return StreamingResponse(
+            body_stream,
             media_type="application/octet-stream",
             headers={
                 "Content-Disposition": f'attachment; filename="{version.storage_path}"',

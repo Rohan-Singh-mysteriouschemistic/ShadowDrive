@@ -242,15 +242,20 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
 
         # ── Step 4: Hash verification ────────────────────────────────────
         try:
-            file_bytes = storage.get_object(final_key)
+            sha256 = hashlib.sha256()
+            body_stream = storage.get_object_stream(final_key)
+            while True:
+                data = body_stream.read(1024 * 1024)
+                if not data:
+                    break
+                sha256.update(data)
+            actual_hash = sha256.hexdigest()
         except Exception as e:
-            logger.error("assemble_and_verify: re-read failed: {}", e)
+            logger.error("assemble_and_verify: re-read/hash failed: {}", e)
             version.upload_status = UploadStatus.failed
             db.commit()
             _notify_completion(version, "failed")
             return {"status": "failed", "reason": f"verify_read_error: {e}"}
-
-        actual_hash = hashlib.sha256(file_bytes).hexdigest()
 
         if actual_hash == expected_hash:
             version.upload_status = UploadStatus.complete
