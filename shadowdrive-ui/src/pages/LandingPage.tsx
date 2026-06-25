@@ -230,7 +230,7 @@ export default function LandingPage() {
               fontSize: '56px', lineHeight: '1.05', fontWeight: 800,
               transitionDelay: '300ms'
             }}>
-              SYNCHRONIZATION,<br/>PERFECTED<span className="text-primary">.</span>
+              SYNCHRONIZATION <br/>PERFECTED<span className="text-primary">.</span>
             </h1>
             
             <p className="reveal-up is-visible text-on-surface-variant mb-10 max-w-[600px]" style={{

@@ -52,7 +52,7 @@ if [ "$START_SERVER" = true ]; then
     fi
 
     # Start docker services
-    # docker-compose up -d
+    docker compose up -d
 
     # Ensure SECRET_KEY is set (required by app.utils since Sprint 1)
     export SECRET_KEY="${SECRET_KEY:-$(openssl rand -hex 32)}"

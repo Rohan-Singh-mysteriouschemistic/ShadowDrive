@@ -8,4 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    allowedHosts: [
+      'baadal.tailb4fef9.ts.net'
+    ]
+  }
 })
