@@ -32,6 +32,7 @@ export default function FileExplorer() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [transfers, setTransfers] = useState<any[]>([]);
+  const [duplicateFileModal, setDuplicateFileModal] = useState<{ open: boolean; name: string }>({ open: false, name: '' });
 
   useEffect(() => {
     const fetchTransfers = async () => {
@@ -106,7 +107,7 @@ export default function FileExplorer() {
       (f: any) => f.file_path === file.name
     );
     if (fileExists) {
-      alert("A file with this name is already present.");
+      setDuplicateFileModal({ open: true, name: file.name });
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
@@ -387,6 +388,22 @@ export default function FileExplorer() {
             {saveError && <div className="text-red-500 font-code-sm mt-2">{saveError}</div>}
           </>
         )}
+      </Modal>
+
+      <Modal
+        open={duplicateFileModal.open}
+        onClose={() => setDuplicateFileModal({ open: false, name: '' })}
+        title="File Already Exists"
+        footer={
+          <Button variant="primary" onClick={() => setDuplicateFileModal({ open: false, name: '' })}>
+            Understand
+          </Button>
+        }
+      >
+        <p className="text-on-surface-variant font-code-sm">
+          A file named <span className="text-primary font-bold">{duplicateFileModal.name}</span> is already present in your vault.
+          Please rename the file or delete the existing one before uploading.
+        </p>
       </Modal>
     </div>
   );

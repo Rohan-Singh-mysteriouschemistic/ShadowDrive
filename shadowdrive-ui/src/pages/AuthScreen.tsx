@@ -154,7 +154,7 @@ export default function AuthScreen() {
           }}
         />
         <motion.div className="relative z-10 text-center max-w-lg" {...fadeIn(0.2)}>
-          <img src="/logo.png" alt="ShadowDrive Logo" className="w-16 h-16 object-contain mx-auto mb-8 filter drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]" />
+          <img src="/logo.jpeg" alt="ShadowDrive Logo" className="w-16 h-16 object-contain mx-auto mb-8 filter drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]" />
           <h1 className="text-white mb-4 tracking-tighter font-display-lg text-display-lg" style={{ textShadow: '0 0 20px rgba(16,185,129,0.4)' }}>
             SHADOWDRIVE
           </h1>
@@ -170,7 +170,7 @@ export default function AuthScreen() {
 
           {/* Mobile branding fallback */}
           <motion.div className="md:hidden flex flex-col items-center text-center mb-10" {...fadeIn(0)}>
-            <img src="/logo.png" alt="ShadowDrive Logo" className="w-12 h-12 object-contain mb-4 filter drop-shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
+            <img src="/logo.jpeg" alt="ShadowDrive Logo" className="w-12 h-12 object-contain mb-4 filter drop-shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
             <h1 className="font-headline-lg-mobile text-headline-lg-mobile text-white tracking-tighter" style={{ textShadow: '0 0 20px rgba(16,185,129,0.4)' }}>
               SHADOWDRIVE
             </h1>
