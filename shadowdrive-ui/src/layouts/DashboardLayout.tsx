@@ -99,10 +99,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
       <nav className="md:hidden flex justify-between items-center px-margin-mobile py-4 w-full border-b border-white/5 glass-panel-darker sticky top-0 z-50">
         <div
-          className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface flex items-center gap-2 cursor-pointer"
+          className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface flex items-center gap-2.5 cursor-pointer"
           onClick={() => navigate('/vault')}
         >
-          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>dns</span>
+          <img src="/logo.png" alt="ShadowDrive Logo" className="w-6 h-6 object-contain" />
           SHADOWDRIVE
         </div>
         <button
@@ -118,9 +118,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           className="mb-12 flex items-center gap-3 cursor-pointer group"
           onClick={() => navigate('/vault')}
         >
-          <div className="w-8 h-8 rounded bg-primary-container/20 flex items-center justify-center border border-primary/30 group-hover:bg-primary/20 transition-colors">
-            <span className="material-symbols-outlined text-primary text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>dns</span>
-          </div>
+          <img src="/logo.png" alt="ShadowDrive Logo" className="w-8 h-8 object-contain transition-transform group-hover:scale-105 duration-200" />
           <h1 className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface group-hover:text-primary transition-colors" style={{ textShadow: '0 0 15px rgba(16, 185, 129, 0.3)' }}>SHADOWDRIVE</h1>
         </div>
 

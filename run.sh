@@ -60,20 +60,11 @@ if [ "$START_SERVER" = true ]; then
 
     echo ""
     echo "[2/5] Starting FastAPI Backend Server..."
-    # Run the FastAPI server in the background (or in a new terminal if supported)
-    if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
-        start cmd //k "python -m uvicorn app.main:app --reload --host 0.0.0.0"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        osascript -e "tell application \"Terminal\" to do script \"cd '$PWD' && set -a && [ -f .env ] && source .env && set +a && export SECRET_KEY='$SECRET_KEY' && source .venv/bin/activate && python -m uvicorn app.main:app --reload --host 0.0.0.0\""
-    elif command -v gnome-terminal &> /dev/null; then
-        gnome-terminal -- bash -c ".venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0; exec bash" &
-    elif command -v xterm &> /dev/null; then
-        xterm -e ".venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0" &
-    else
-        # Fallback to running in the background and logging
-        .venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 > server.log 2>&1 &
-        echo "Server started in background (see server.log)"
-    fi
+    # Always run in the background and log to server.log to avoid IDE terminal launch issues
+    set -a; [ -f .env ] && source .env; set +a
+    export SECRET_KEY="${SECRET_KEY:-$(openssl rand -hex 32)}"
+    .venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 > server.log 2>&1 &
+    echo "Server started in background (see server.log)"
 
     echo ""
     echo "Waiting 5 seconds for the backend server to initialize..."
@@ -82,56 +73,27 @@ if [ "$START_SERVER" = true ]; then
 
     echo ""
     echo "[3/5] Starting RQ Background Worker..."
-    # Run the RQ worker in the background (or in a new terminal if supported)
-    if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
-        start cmd //k "rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        osascript -e "tell application \"Terminal\" to do script \"cd '$PWD' && set -a && [ -f .env ] && source .env && set +a && export SECRET_KEY='$SECRET_KEY' && source .venv/bin/activate && rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker\""
-    elif command -v gnome-terminal &> /dev/null; then
-        gnome-terminal -- bash -c ".venv/bin/rq worker shadowdrive-jobs --with-scheduler; exec bash" &
-    elif command -v xterm &> /dev/null; then
-        xterm -e ".venv/bin/rq worker shadowdrive-jobs --with-scheduler" &
-    else
-        # Fallback to running in the background and logging
-        .venv/bin/rq worker shadowdrive-jobs --with-scheduler > worker.log 2>&1 &
-        echo "Worker started in background (see worker.log)"
-    fi
+    # Always run in the background and log to worker.log
+    set -a; [ -f .env ] && source .env; set +a
+    export SECRET_KEY="${SECRET_KEY:-$(openssl rand -hex 32)}"
+    .venv/bin/rq worker shadowdrive-jobs --with-scheduler -w rq.worker.SimpleWorker > worker.log 2>&1 &
+    echo "Worker started in background (see worker.log)"
 fi
 
 if [ "$START_CLIENT" = true ]; then
     echo ""
     echo "[4/5] Starting Local Client API Agent..."
     cd "$ROOT_DIR/Client-Logic" || exit
-    if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
-        start cmd //k "python local_api.py"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        osascript -e "tell application \"Terminal\" to do script \"cd '$PWD' && source ../Server-Logic/server/.venv/bin/activate && python local_api.py\""
-    elif command -v gnome-terminal &> /dev/null; then
-        gnome-terminal -- bash -c "../Server-Logic/server/.venv/bin/python local_api.py; exec bash" &
-    elif command -v xterm &> /dev/null; then
-        xterm -e "../Server-Logic/server/.venv/bin/python local_api.py" &
-    else
-        # Fallback to running in the background and logging
-        ../Server-Logic/server/.venv/bin/python local_api.py > client.log 2>&1 &
-        echo "Client started in background (see client.log)"
-    fi
+    # Always run in the background and log to client.log
+    ../Server-Logic/server/.venv/bin/python local_api.py > client.log 2>&1 &
+    echo "Client started in background (see client.log)"
 
     echo ""
     echo "[5/5] Starting UI Landing Page..."
     cd "$ROOT_DIR/shadowdrive-ui" || exit
-    if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win32"* ]]; then
-        start cmd //k "npm run dev -- --open"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        osascript -e "tell application \"Terminal\" to do script \"cd '$PWD' && npm run dev -- --open\""
-    elif command -v gnome-terminal &> /dev/null; then
-        gnome-terminal -- bash -c "npm run dev -- --open; exec bash" &
-    elif command -v xterm &> /dev/null; then
-        xterm -e "npm run dev -- --open" &
-    else
-        # Fallback to running in the background and logging
-        npm run dev > ui.log 2>&1 &
-        echo "UI started in background (see ui.log). Open http://localhost:5173 in your browser."
-    fi
+    # Always run in the background and log to ui.log
+    npm run dev > ui.log 2>&1 &
+    echo "UI started in background (see ui.log). Open http://localhost:5173 in your browser."
 fi
 
 echo ""

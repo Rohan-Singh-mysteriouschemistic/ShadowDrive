@@ -25,11 +25,14 @@ minio_data/
 .obsidian
 Project_Knowledge.txt
 skills-lock.json
-.venv
-
+Client-Logic/user-data
 
 
 # OS Junk
+.venv
+phosphor-icons
+Shadow_Drive_tech_reveal_icon_202606251753.mp4
+Logo.jpeg
 .DS_Store
 Thumbs.db
 tutorial

@@ -181,8 +181,9 @@ export default function LandingPage() {
 
         {/* Header */}
         <header className="fixed top-0 w-full z-50 flex justify-between items-center px-8 md:px-12 py-8 hidden md:flex reveal-up is-visible" style={{ animationDelay: '0.1s' }}>
-          <div className="flex items-center gap-2 cursor-pointer">
-            <span className="font-display-lg text-[22px] font-bold text-white tracking-tight">ShadowDrive.</span>
+          <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => navigate('/')}>
+            <img src="/logo.png" alt="ShadowDrive Logo" className="w-6 h-6 object-contain" />
+            <span className="font-display-lg text-[22px] font-bold text-white tracking-tight">ShadowDrive</span>
           </div>
           <nav className="flex items-center gap-8">
             <button 
@@ -196,7 +197,10 @@ export default function LandingPage() {
 
         {/* Mobile Nav */}
         <header className="fixed top-0 w-full z-50 flex justify-between items-center px-4 h-16 bg-background/60 backdrop-blur-md border-b border-white/5 md:hidden reveal-up is-visible">
-          <span className="text-xl font-bold text-primary tracking-tighter" style={{ fontFamily: 'Geist, sans-serif' }}>ShadowDrive</span>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/')}>
+            <img src="/logo.png" alt="ShadowDrive Logo" className="w-5 h-5 object-contain" />
+            <span className="text-xl font-bold text-primary tracking-tighter" style={{ fontFamily: 'Geist, sans-serif' }}>ShadowDrive</span>
+          </div>
           <button className="text-on-surface p-2">
             <span className="material-symbols-outlined">menu</span>
           </button>
@@ -230,7 +234,7 @@ export default function LandingPage() {
               fontSize: '56px', lineHeight: '1.05', fontWeight: 800,
               transitionDelay: '300ms'
             }}>
-              SYNCHRONIZATION <br/>PERFECTED<span className="text-primary">.</span>
+              SYNCHRONIZATION <br/>PERFECTED
             </h1>
             
             <p className="reveal-up is-visible text-on-surface-variant mb-10 max-w-[600px]" style={{
@@ -342,7 +346,10 @@ export default function LandingPage() {
         {/* Footer */}
         <footer className="w-full py-12 px-8 md:px-12 flex flex-col md:flex-row justify-between items-center gap-6 border-t border-white/5 mt-auto backdrop-blur-md relative z-10 reveal-up is-visible"
           style={{ background: 'rgba(24,24,27,0.5)', transitionDelay: '1000ms' }}>
-          <div className="text-on-surface font-bold tracking-tight" style={{ fontFamily: 'Geist, sans-serif', fontSize: '20px' }}>ShadowDrive</div>
+          <div className="flex items-center gap-2 text-on-surface font-bold tracking-tight" style={{ fontFamily: 'Geist, sans-serif', fontSize: '20px' }}>
+            <img src="/logo.png" alt="ShadowDrive Logo" className="w-5 h-5 object-contain" />
+            ShadowDrive
+          </div>
           <div className="text-on-surface-variant text-center md:text-left" style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '14px' }}>
             © 2026 ShadowDrive Systems. Terminal-grade synchronization.
           </div>
