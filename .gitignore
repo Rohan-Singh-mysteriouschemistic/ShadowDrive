@@ -41,7 +41,6 @@ _bmad
 .opencode
 .obsidian
 project-journal
-AGENTS.md
 skills-lock.json
 
 # Ignore personal study documentation
@@ -49,7 +48,6 @@ docs/
 project-journal
 .opencode
 .understand-anything
-AGENTS.md
 .code-review-graph/
 
 # Ignore temporary AI implementation logs
