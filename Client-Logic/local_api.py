@@ -175,7 +175,7 @@ def register(req: AuthRequest):
     return {"status": "success", "access_token": token, "message": "Registration complete and watcher started."}
 
 @app.post("/api/upload")
-def handle_ui_upload(file: UploadFile = File(...)):
+async def handle_ui_upload(file: UploadFile = File(...)):
     """Saves file from UI to the watch_folder so the sync engine picks it up."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
@@ -186,12 +186,16 @@ def handle_ui_upload(file: UploadFile = File(...)):
 
     file_path = os.path.normpath(os.path.join(watch_dir, file.filename))
 
+    # Ensure parent directories exist
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
     # Suppress watchdog events during the write to avoid 0-byte or partial triggers
     watcher.suppress_path(file_path)
 
     try:
+        content = await file.read()
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content)
     finally:
         # After write completes, manually trigger file registration
         from diff_engine import process_single_file

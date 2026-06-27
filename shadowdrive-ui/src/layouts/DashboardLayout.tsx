@@ -102,7 +102,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface flex items-center gap-2.5 cursor-pointer"
           onClick={() => navigate('/vault')}
         >
-          <img src="/logo.jpeg" alt="ShadowDrive Logo" className="w-6 h-6 object-contain" />
+          <div className="relative flex-shrink-0 w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.12)', boxShadow: '0 0 10px rgba(16,185,129,0.25)' }}>
+            <img src="/logo.png" alt="ShadowDrive Logo" className="w-6 h-6 object-contain" style={{ mixBlendMode: 'screen', filter: 'brightness(1.1) saturate(1.3)' }} />
+          </div>
           SHADOWDRIVE
         </div>
         <button
@@ -118,7 +120,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           className="mb-12 flex items-center gap-3 cursor-pointer group"
           onClick={() => navigate('/vault')}
         >
-          <img src="/logo.jpeg" alt="ShadowDrive Logo" className="w-8 h-8 object-contain transition-transform group-hover:scale-105 duration-200" />
+          <div className="relative flex-shrink-0 w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center transition-all duration-300 group-hover:scale-105" style={{ background: 'rgba(16,185,129,0.1)', boxShadow: '0 0 0 1px rgba(16,185,129,0.2), 0 0 16px rgba(16,185,129,0.15)' }}>
+            <img src="/logo.png" alt="ShadowDrive Logo" className="w-9 h-9 object-contain" style={{ mixBlendMode: 'screen', filter: 'brightness(1.15) saturate(1.4)' }} />
+          </div>
           <h1 className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface group-hover:text-primary transition-colors" style={{ textShadow: '0 0 15px rgba(16, 185, 129, 0.3)' }}>SHADOWDRIVE</h1>
         </div>
 
