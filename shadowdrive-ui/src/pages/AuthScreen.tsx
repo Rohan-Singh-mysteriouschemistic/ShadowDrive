@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import Card from '../components/Card';
+import { ShadowDriveLogo } from '../components/shared/ShadowDriveLogo';
 import { setToken, CLIENT_API_URL } from '../lib/api';
 
 const fadeIn = (delay: number) => ({
@@ -146,7 +147,7 @@ export default function AuthScreen() {
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
       >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.05)_0%,transparent_50%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,255,136,0.05)_0%,transparent_50%)]" />
         <div
           className="absolute inset-0 opacity-[0.03] pointer-events-none"
           style={{
@@ -154,8 +155,8 @@ export default function AuthScreen() {
           }}
         />
         <motion.div className="relative z-10 text-center max-w-lg" {...fadeIn(0.2)}>
-          <img src="/logo.jpeg" alt="ShadowDrive Logo" className="w-16 h-16 object-contain mx-auto mb-8 filter drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]" />
-          <h1 className="text-white mb-4 tracking-tighter font-display-lg text-display-lg" style={{ textShadow: '0 0 20px rgba(16,185,129,0.4)' }}>
+          <ShadowDriveLogo size={64} className="mx-auto mb-8" />
+          <h1 className="text-white mb-4 tracking-tighter font-display-lg text-display-lg" style={{ textShadow: '0 0 20px rgba(0,255,136,0.4)' }}>
             SHADOWDRIVE
           </h1>
           <p className="font-code-sm text-code-sm text-on-surface-variant uppercase tracking-[0.2em]">
@@ -170,14 +171,14 @@ export default function AuthScreen() {
 
           {/* Mobile branding fallback */}
           <motion.div className="md:hidden flex flex-col items-center text-center mb-10" {...fadeIn(0)}>
-            <img src="/logo.jpeg" alt="ShadowDrive Logo" className="w-12 h-12 object-contain mb-4 filter drop-shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
-            <h1 className="font-headline-lg-mobile text-headline-lg-mobile text-white tracking-tighter" style={{ textShadow: '0 0 20px rgba(16,185,129,0.4)' }}>
+            <ShadowDriveLogo size={48} className="mb-4" />
+            <h1 className="font-headline-lg-mobile text-headline-lg-mobile text-white tracking-tighter" style={{ textShadow: '0 0 20px rgba(0,255,136,0.4)' }}>
               SHADOWDRIVE
             </h1>
           </motion.div>
 
           <Card variant="glass" className="p-8 relative overflow-hidden group">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.08)_0%,transparent_60%)] opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(0,255,136,0.08)_0%,transparent_60%)] opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
 
             <div className="relative z-10">
               {/* Header */}

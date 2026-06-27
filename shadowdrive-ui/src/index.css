@@ -5,22 +5,22 @@
    ========================================================= */
 @theme {
   /* --- Colors --- */
-  --color-primary:                    #4edea3;
-  --color-primary-fixed:              #6ffbbe;
-  --color-primary-fixed-dim:          #4edea3;
-  --color-primary-container:          #10b981;
-  --color-on-primary:                 #003824;
-  --color-on-primary-fixed:           #002113;
-  --color-on-primary-fixed-variant:   #005236;
-  --color-on-primary-container:       #00422b;
-  --color-secondary:                  #68dba9;
-  --color-secondary-fixed:            #85f8c4;
-  --color-secondary-fixed-dim:        #68dba9;
-  --color-secondary-container:        #25a475;
-  --color-on-secondary:               #003825;
-  --color-on-secondary-fixed:         #002114;
-  --color-on-secondary-fixed-variant: #005137;
-  --color-on-secondary-container:     #00311f;
+  --color-primary:                    #00ff88;
+  --color-primary-fixed:              #66ffaa;
+  --color-primary-fixed-dim:          #00ff88;
+  --color-primary-container:          #00cc6a;
+  --color-on-primary:                 #002a1a;
+  --color-on-primary-fixed:           #001a0e;
+  --color-on-primary-fixed-variant:   #004428;
+  --color-on-primary-container:       #003820;
+  --color-secondary:                  #4de8b0;
+  --color-secondary-fixed:            #80ffc0;
+  --color-secondary-fixed-dim:        #4de8b0;
+  --color-secondary-container:        #1a9966;
+  --color-on-secondary:               #002a1a;
+  --color-on-secondary-fixed:         #001a0e;
+  --color-on-secondary-fixed-variant: #004428;
+  --color-on-secondary-container:     #002816;
   --color-tertiary:                   #ffb3af;
   --color-tertiary-fixed:             #ffdad7;
   --color-tertiary-fixed-dim:         #ffb3af;
@@ -29,39 +29,39 @@
   --color-on-tertiary-fixed:          #410005;
   --color-on-tertiary-fixed-variant:  #842225;
   --color-on-tertiary-container:      #711419;
-  --color-background:                 #131313;
-  --color-on-background:              #e5e2e1;
-  --color-surface:                    #131313;
-  --color-surface-dim:                #131313;
-  --color-surface-bright:             #3a3939;
-  --color-surface-tint:               #4edea3;
-  --color-surface-variant:            #353534;
-  --color-surface-container-lowest:   #0e0e0e;
-  --color-surface-container-low:      #1c1b1b;
-  --color-surface-container:          #201f1f;
-  --color-surface-container-high:     #2a2a2a;
-  --color-surface-container-highest:  #353534;
-  --color-on-surface:                 #e5e2e1;
-  --color-on-surface-variant:         #bbcabf;
-  --color-inverse-surface:            #e5e2e1;
-  --color-inverse-on-surface:         #313030;
-  --color-inverse-primary:            #006c49;
-  --color-outline:                    #86948a;
-  --color-outline-variant:            #3c4a42;
+  --color-background:                 #0a0e1a;
+  --color-on-background:              #e0e6ef;
+  --color-surface:                    #0a0e1a;
+  --color-surface-dim:                #0a0e1a;
+  --color-surface-bright:             #2a3548;
+  --color-surface-tint:               #00ff88;
+  --color-surface-variant:            #1e2a3a;
+  --color-surface-container-lowest:   #060912;
+  --color-surface-container-low:      #0d1220;
+  --color-surface-container:          #111827;
+  --color-surface-container-high:     #1a2332;
+  --color-surface-container-highest:  #243040;
+  --color-on-surface:                 #e0e6ef;
+  --color-on-surface-variant:         #8899aa;
+  --color-inverse-surface:            #e0e6ef;
+  --color-inverse-on-surface:         #0a0e1a;
+  --color-inverse-primary:            #00994d;
+  --color-outline:                    #556677;
+  --color-outline-variant:            #1e3344;
   --color-error:                      #ffb4ab;
   --color-error-container:            #93000a;
   --color-on-error:                   #690005;
   --color-on-error-container:         #ffdad6;
 
   /* --- Font Families --- */
-  --font-family-sans:     "Geist", system-ui, sans-serif;
+  --font-family-sans:     "Space Grotesk", system-ui, sans-serif;
   --font-family-mono:     "JetBrains Mono", monospace;
-  --font-family-body-lg:           "Geist", sans-serif;
-  --font-family-body-md:           "Geist", sans-serif;
-  --font-family-display-lg:        "Geist", sans-serif;
-  --font-family-headline-md:       "Geist", sans-serif;
-  --font-family-headline-lg:       "Geist", sans-serif;
-  --font-family-headline-lg-mobile:"Geist", sans-serif;
+  --font-family-body-lg:           "Space Grotesk", sans-serif;
+  --font-family-body-md:           "Space Grotesk", sans-serif;
+  --font-family-display-lg:        "Space Grotesk", sans-serif;
+  --font-family-headline-md:       "Space Grotesk", sans-serif;
+  --font-family-headline-lg:       "Space Grotesk", sans-serif;
+  --font-family-headline-lg-mobile:"Space Grotesk", sans-serif;
   --font-family-label-md:          "JetBrains Mono", monospace;
   --font-family-code-sm:           "JetBrains Mono", monospace;
 
@@ -113,6 +113,15 @@
   --spacing-margin-desktop:  48px;
 }
 
+:root {
+  --ink: var(--color-on-surface);
+  --ink-muted: var(--color-on-surface-variant);
+  --accent: var(--color-primary);
+  --accent-dim: var(--color-primary-container);
+  --accent-glow: rgba(0, 255, 136, 0.4);
+  --background: var(--color-background);
+}
+
 /* =========================================================
    Global resets & base styles
    ========================================================= */
@@ -134,55 +143,53 @@ body {
 }
 
 /* =========================================================
+   Lenis Smooth Scrolling Base
+   ========================================================= */
+html.lenis, html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+.lenis.lenis-scrolling iframe {
+  pointer-events: none;
+}
+
+/* =========================================================
    Shared Utility Styles (used by both Landing & Auth)
    ========================================================= */
 
-/* Shimmer headline */
-.emerald-text-glow {
-  background: linear-gradient(
-    90deg,
-    rgba(229, 226, 225, 1) 0%,
-    rgba(229, 226, 225, 1) 40%,
-    rgba(16, 185, 129, 1) 50%,
-    rgba(229, 226, 225, 1) 60%,
-    rgba(229, 226, 225, 1) 100%
-  );
-  background-size: 200% auto;
-  color: transparent;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: shimmer 5s linear infinite;
-}
-
-@keyframes shimmer {
-  0%   { background-position: -100% center; }
-  100% { background-position:  200% center; }
-}
 
 /* Emerald pulse (status dot) */
 @keyframes pulse-emerald {
-  0%   { box-shadow: 0 0 0 0   rgba(16, 185, 129, 0.6); }
-  70%  { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);   }
-  100% { box-shadow: 0 0 0 0   rgba(16, 185, 129, 0);   }
+  0%   { box-shadow: 0 0 0 0   rgba(0, 255, 136, 0.6); }
+  70%  { box-shadow: 0 0 0 10px rgba(0, 255, 136, 0);   }
+  100% { box-shadow: 0 0 0 0   rgba(0, 255, 136, 0);   }
 }
 .animate-pulse-emerald { animation: pulse-emerald 2s infinite; }
 
 /* Auth input glow on focus */
 .input-glow:focus {
-  box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
   border-color: var(--color-primary) !important;
 }
 
 /* Glass panel utility (was inline in 6+ components) */
 .glass-panel {
-  background-color: rgba(17, 17, 17, 0.6);
+  background-color: rgba(10, 14, 26, 0.7);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .glass-panel-darker {
-  background-color: rgba(17, 17, 17, 0.8);
+  background-color: rgba(10, 14, 26, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -191,16 +198,16 @@ body {
 /* Page header pattern (was copy-pasted 6 times) */
 .page-header {
   @apply h-20 border-b border-white/5 flex items-center justify-between px-margin-desktop shrink-0 z-10 border-l-0 border-r-0 border-t-0;
-  background-color: rgba(17, 17, 17, 0.6);
+  background-color: rgba(10, 14, 26, 0.7);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
 
 /* Pulse dot for status indicators */
 @keyframes pulse-dot {
-  0% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0.4); }
-  70% { box-shadow: 0 0 0 6px rgba(78, 222, 163, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
 }
 .pulse-dot {
   animation: pulse-dot 2s infinite;
@@ -213,72 +220,4 @@ body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
-}
-
-/* Scroll-reveal helpers (used by LandingPage) */
-.reveal-up {
-  opacity: 0;
-  transform: translateY(30px);
-  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.reveal-up.is-visible { opacity: 1; transform: translateY(0); }
-
-/* Feature card reveal */
-.feature-card-reveal {
-  opacity: 0;
-  transform: translateY(32px);
-  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.7s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.3s ease, border-color 0.3s ease;
-}
-.feature-card-reveal.is-active { opacity: 1; transform: translateY(0); }
-.feature-card-reveal:hover {
-  box-shadow: 0 0 25px rgba(16, 185, 129, 0.2);
-  border-color: rgba(16, 185, 129, 0.4) !important;
-}
-
-/* Tilt card */
-.tilt-card {
-  transition: transform 0.15s ease-out,
-              box-shadow 0.3s ease, border-color 0.3s ease;
-}
-.tilt-card:hover {
-  transition: transform 0s !important;
-}
-
-/* Floating orbs */
-@keyframes float {
-  0%   { transform: translate(0, 0) scale(1); }
-  50%  { transform: translate(50px, -50px) scale(1.1); }
-  100% { transform: translate(-50px, 50px) scale(0.9); }
-}
-
-/* Topology icon pulse */
-@keyframes topology-pulse {
-  0%   { transform: scale(1);   opacity: 0.5; }
-  50%  { transform: scale(1.1); opacity: 1; filter: drop-shadow(0 0 12px #10b981); }
-  100% { transform: scale(1);   opacity: 0.5; }
-}
-.topology-icon { animation: topology-pulse 3s infinite; }
-
-/* Liquid Glass utility (imported from ui-ux-pro-max guidelines) */
-.liquid-glass {
-  background: rgba(255, 255, 255, 0.01);
-  background-blend-mode: luminosity;
-  backdrop-filter: blur(4px);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
-  position: relative;
-}
-.liquid-glass::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  padding: 1.4px;
-  border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(255,255,255,0.1));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
 }
