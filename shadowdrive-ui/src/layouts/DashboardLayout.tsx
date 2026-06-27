@@ -5,6 +5,7 @@ import { getToken, apiFetch, setToken, getOrFetchToken, CLIENT_API_URL } from '.
 import Badge from '../components/Badge';
 import Card from '../components/Card';
 import { ShadowDriveLogo } from '../components/shared/ShadowDriveLogo';
+import MobileNavDrawer from '../components/MobileNavDrawer';
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -17,6 +18,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [conflictsCount, setConflictsCount] = useState(0);
   const [showConfirmLogout, setShowConfirmLogout] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(!getToken());
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     async function verifyAuthAndFetchStats() {
@@ -98,21 +100,32 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         }
       `}</style>
 
-      <nav className="md:hidden flex justify-between items-center px-margin-mobile py-4 w-full border-b border-white/5 glass-panel-darker sticky top-0 z-50">
+      <nav className="md:hidden flex justify-between items-center px-margin-mobile py-3 w-full border-b border-white/5 glass-panel-darker sticky top-0 z-50 h-14">
         <div
           className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface flex items-center gap-2.5 cursor-pointer"
           onClick={() => navigate('/vault')}
         >
-          <ShadowDriveLogo size={24} animated={false} />
-          SHADOWDRIVE
+          <ShadowDriveLogo size={20} animated={false} />
+          <span className="text-sm">SHADOWDRIVE</span>
         </div>
         <button
-          className="text-on-surface-variant hover:text-primary transition-colors cursor-pointer"
-          onClick={() => alert("Mobile menu toggle not yet implemented!")}
+          className="text-on-surface-variant hover:text-primary transition-colors cursor-pointer p-2"
+          onClick={() => setMobileMenuOpen(true)}
+          aria-label="Open menu"
         >
           <span className="material-symbols-outlined">menu</span>
         </button>
       </nav>
+
+      <MobileNavDrawer
+        isOpen={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        menuItems={menuItems}
+        systemItems={systemItems}
+        currentPath={location.pathname}
+        storage={storage}
+        onLogout={() => setShowConfirmLogout(true)}
+      />
 
       <aside className="hidden md:flex flex-col w-72 h-screen fixed left-0 top-0 glass-panel-darker border-r border-white/5 p-6 z-40">
         <div
@@ -194,7 +207,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 Are you sure you want to sign out? This will stop background client sync and watcher services.
               </p>
             </div>
-            <div className="flex gap-4">
+            <div className="flex flex-col sm:flex-row gap-4">
               <button
                 onClick={() => setShowConfirmLogout(false)}
                 className="flex-1 py-3 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white font-label-md text-label-md transition-all cursor-pointer border border-white/5"

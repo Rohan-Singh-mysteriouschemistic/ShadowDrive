@@ -240,7 +240,7 @@ export default function FileExplorer() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto p-margin-desktop z-10">
+      <div className="flex-1 overflow-y-auto page-content z-10">
         <div className="w-full max-w-container-max mx-auto">
           {uploadMutation.isPending && (
             <div className="flex items-center gap-2 p-4 mb-4 bg-primary/10 border border-primary/20 rounded text-primary font-code-sm">
@@ -249,7 +249,7 @@ export default function FileExplorer() {
             </div>
           )}
           <Card className="w-full">
-          <div className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/10 font-code-sm text-code-sm text-on-surface-variant bg-surface-container-low/50">
+          <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/10 font-code-sm text-code-sm text-on-surface-variant bg-surface-container-low/50">
             <div className="col-span-5">Name</div>
             <div className="col-span-2">Size</div>
             <div className="col-span-3">Last Modified</div>
@@ -280,8 +280,9 @@ export default function FileExplorer() {
                 }
               />
             )}
+            {/* Desktop Table View */}
             {filteredFiles.map(file => (
-              <div key={file.id} className="file-row group grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/5 items-center hover:bg-white/5 transition-colors relative cursor-pointer" onClick={(e) => handleRowClick(e, file)}>
+              <div key={file.id} className="hidden md:grid file-row group grid-cols-12 gap-4 px-6 py-4 border-b border-white/5 items-center hover:bg-white/5 transition-colors relative cursor-pointer" onClick={(e) => handleRowClick(e, file)}>
                 <div className="col-span-5 flex items-center space-x-3 font-code-sm text-code-sm text-on-surface">
                   <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors">{getFileIcon(file.file_path)}</span>
                   <span className="truncate">{file.file_path}</span>
@@ -318,6 +319,51 @@ export default function FileExplorer() {
                       }}
                     />
                   </div>
+                </div>
+              </div>
+            ))}
+            {/* Mobile Card View */}
+            {filteredFiles.map(file => (
+              <div key={file.id} className="md:hidden bg-surface-container-low/50 border border-white/10 rounded-lg p-4 space-y-3 cursor-pointer hover:bg-surface-container/50 transition-colors" onClick={(e) => handleRowClick(e, file)}>
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex items-center space-x-2 flex-1 min-w-0">
+                    <span className="material-symbols-outlined text-on-surface-variant text-sm shrink-0">{getFileIcon(file.file_path)}</span>
+                    <span className="font-code-sm text-code-sm text-on-surface truncate">{file.file_path}</span>
+                  </div>
+                  {getStatusDot(file.upload_status, file.is_conflict_copy)}
+                </div>
+                <div className="flex justify-between text-xs text-on-surface-variant font-code-sm">
+                  <span>{formatBytes(file.size_bytes)}</span>
+                  <span>{new Date(file.updated_at).toLocaleDateString()}</span>
+                </div>
+                <div className="flex gap-2 pt-2 border-t border-white/5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="history"
+                    className="flex-1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/vault/history?file=${file.id}&name=${encodeURIComponent(file.file_path)}`);
+                    }}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="download"
+                    className="flex-1"
+                    onClick={(e) => handleDownload(e, file.storage_path)}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="delete"
+                    className="flex-1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFileToDelete({ id: file.id, name: file.file_path });
+                    }}
+                  />
                 </div>
               </div>
             ))}

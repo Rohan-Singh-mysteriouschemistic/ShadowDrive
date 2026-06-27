@@ -108,9 +108,15 @@
 
   /* --- Spacing extras --- */
   --spacing-gutter:          24px;
+  --spacing-gutter-mobile:   16px;
   --spacing-unit:            4px;
   --spacing-margin-mobile:   16px;
   --spacing-margin-desktop:  48px;
+  --spacing-page-padding-mobile: 16px;
+  --spacing-page-padding-tablet: 24px;
+  --spacing-page-padding-desktop: 48px;
+  --spacing-header-height-mobile: 56px;
+  --spacing-header-height-desktop: 80px;
 }
 
 :root {
@@ -197,10 +203,17 @@ html.lenis, html.lenis body {
 
 /* Page header pattern (was copy-pasted 6 times) */
 .page-header {
-  @apply h-20 border-b border-white/5 flex items-center justify-between px-margin-desktop shrink-0 z-10 border-l-0 border-r-0 border-t-0;
+  @apply border-b border-white/5 flex items-center justify-between shrink-0 z-10 border-l-0 border-r-0 border-t-0 px-margin-mobile md:px-margin-desktop;
+  height: var(--spacing-header-height-mobile);
   background-color: rgba(10, 14, 26, 0.7);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+}
+
+@media (min-width: 768px) {
+  .page-header {
+    height: var(--spacing-header-height-desktop);
+  }
 }
 
 /* Pulse dot for status indicators */
@@ -220,4 +233,73 @@ html.lenis, html.lenis body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Mobile-responsive utilities */
+@media (max-width: 767px) {
+  .page-content {
+    @apply p-margin-mobile;
+  }
+  
+  .header-actions {
+    @apply flex-wrap gap-2 sm:gap-3;
+  }
+  
+  .table-row-mobile {
+    @apply flex flex-col gap-2;
+  }
+  
+  .table-cell-label {
+    @apply font-label-md text-label-md text-on-surface-variant;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .page-content {
+    @apply p-margin-desktop;
+  }
+}
+
+@media (min-width: 1024px) {
+  .page-content {
+    @apply p-margin-desktop;
+  }
+}
+
+/* Touch-friendly button sizing */
+@media (hover: none) and (pointer: coarse) {
+  button, [role="button"] {
+    @apply min-h-12 min-w-12;
+  }
+}
+
+/* Mobile drawer animation */
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-out-left {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+.drawer-enter {
+  animation: slide-in-left 0.3s ease-out;
+}
+
+.drawer-exit {
+  animation: slide-out-left 0.3s ease-out;
 }
