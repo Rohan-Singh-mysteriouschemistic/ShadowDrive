@@ -186,8 +186,8 @@ export default function LandingPage() {
             <span className="font-display-lg text-[22px] font-bold text-white tracking-tight">ShadowDrive</span>
           </div>
           <nav className="flex items-center gap-8">
-            <button 
-              onClick={() => navigate('/auth')} 
+            <button
+              onClick={() => navigate('/auth')}
               className="text-[13px] font-bold tracking-widest uppercase text-white/70 hover:text-white transition-colors duration-200"
             >
               Login
@@ -211,7 +211,7 @@ export default function LandingPage() {
 
           {/* Hero */}
           <section className="relative pt-12 pb-20 lg:pt-16 lg:pb-32 flex flex-col items-start text-left max-w-[800px] z-10">
-            
+
             {/* Liquid Glass Card (from demo) */}
             <div className="reveal-up is-visible liquid-glass w-[210px] h-[210px] rounded-2xl p-5 flex flex-col justify-between mb-8 cursor-pointer tilt-card z-20" style={{
               transitionDelay: '100ms'
@@ -228,25 +228,25 @@ export default function LandingPage() {
                 </p>
               </div>
             </div>
-            
+
             <h1 className="reveal-up is-visible emerald-text-glow mb-6 uppercase tracking-tight" style={{
               fontFamily: 'Geist, sans-serif',
               fontSize: '56px', lineHeight: '1.05', fontWeight: 800,
               transitionDelay: '300ms'
             }}>
-              SYNCHRONIZATION <br/>PERFECTED
+              SYNCHRONIZATION <br />PERFECTED
             </h1>
-            
+
             <p className="reveal-up is-visible text-on-surface-variant mb-10 max-w-[600px]" style={{
               fontFamily: 'Geist, sans-serif', fontSize: '16px', lineHeight: '1.6',
               transitionDelay: '400ms'
             }}>
               A production-grade distributed file system. Zero conflicts. Absolute truth. Secure your data with our robust architecture built to ensure high availability and seamless synchronization across your entire network.
             </p>
-            
+
             <div className="flex flex-col sm:flex-row gap-6 items-start reveal-up is-visible" style={{ animationDelay: '400ms' }}>
-              <button 
-                onClick={() => navigate('/auth?mode=deploy')} 
+              <button
+                onClick={() => navigate('/auth?mode=deploy')}
                 className="flex items-center justify-center gap-3 bg-primary text-on-primary rounded-full px-8 py-4 font-bold uppercase tracking-wide hover:opacity-90 transition-opacity duration-200 group"
               >
                 Get Started

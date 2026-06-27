@@ -122,7 +122,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` }
           });
-          
+
           if (refreshRes.ok) {
             const data = await refreshRes.json();
             inMemoryToken = data.access_token;
@@ -148,7 +148,7 @@ export async function uploadFile(file: File, remotePath: string) {
     method: 'POST',
     body: formData,
   });
-  
+
   if (!response.ok) throw response;
   return response.json();
 }

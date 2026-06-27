@@ -1,0 +1,29 @@
+/goal /gsap-react /impeccable /design-taste-frontend /frontend-design /ui-styling /vercel-react-best-practices
+
+Read and strictly follow these two documents as your absolute source of truth:
+
+1. @[shadowdrive-ui/DESIGN.md] — The design specification. Every color, font, spacing, 3D behavior, and motion decision is defined here. Do NOT deviate from it.
+
+2. @[shadowdrive-ui/IMPLEMENTATION_GUIDE.md] — The step-by-step execution plan. Follow the phases in exact order (Phase 0 → Phase 6). Every component, its props, its animation behavior, and its code skeleton is specified here.
+
+Execute the full redesign of the ShadowDrive landing page by implementing all phases in order:
+
+- Phase 0: Install dependencies (`@react-three/fiber`, `@react-three/drei`, `@react-three/postprocessing`, `three`, `gsap`, `@gsap/react`, `@types/three`) and clean the CDN script from index.html
+- Phase 1: Build Scene.tsx and NetworkMesh.tsx (the R3F 3D foundation)
+- Phase 2: Build all HTML sections (HeroSection, FeaturesPan, TerminalBlock, DeploySection, Footer)
+- Phase 3: Build Reusable Components (MagneticButton, ShadowDriveLogo, SplashScreen)
+- Phase 4: Replace LandingPage.tsx with the new orchestrator
+- Phase 5: Clean dead CSS from index.css (only remove landing-page classes, keep dashboard/auth classes)
+- Phase 6: Run `npx tsc -b && npm run build` to verify everything compiles
+
+CRITICAL RULES:
+- Do NOT touch any dashboard pages, AuthScreen, DashboardLayout, App.tsx routing, or api.ts
+- The only file being REPLACED is LandingPage.tsx. Everything else is NEW files under components/landing/
+- All @theme tokens in index.css must be preserved
+- Use `useGSAP` from `@gsap/react` for all GSAP animations (not raw useEffect)
+- Use `useMotionValue`/`useTransform` for mouse tracking — NEVER useState for continuous values
+- Respect `prefers-reduced-motion` on every animation
+- The R3F canvas must use `aria-hidden="true"` and `dpr={[1, 1.5]}`
+- Trace the interlocking "S" ribbon shape from Logo.jpeg into ShadowDriveLogo.tsx using SVG paths. Do NOT use an <img> tag for the logo.
+
+After building, run `npm run dev` and use the browser to verify the landing page renders correctly.
