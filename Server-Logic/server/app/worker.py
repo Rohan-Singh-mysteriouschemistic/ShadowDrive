@@ -68,28 +68,34 @@ def _get_session():
     return _SessionFactory()
 
 
-def _notify_completion(version: Version, status_str: str):
+def _notify_completion(user_id: int, file_id: int, file_path: str, version_id: int, status_str: str):
     """Publish a completion event to Redis for the SSE bridge.
     
     Args:
-        version:    The Version ORM object (must be attached to an active session).
+        user_id:    The user ID.
+        file_id:    The file ID.
+        file_path:  The file path.
+        version_id: The version ID.
         status_str: 'complete' or 'failed'.
     """
     notification = {
-        "user_id": version.file.user_id,
+        "user_id": user_id,
         "type": f"upload_{status_str}",
         "data": {
-            "file_id": version.file_id,
-            "file_path": version.file.file_path,
-            "version_id": version.id,
+            "file_id": file_id,
+            "file_path": file_path,
+            "version_id": version_id,
             "status": status_str,
         }
     }
-    redis_conn.publish("shadowdrive:events", json.dumps(notification))
-    logger.info(
-        "Published {} event to Redis for file='{}' (user_id={})",
-        notification["type"], version.file.file_path, version.file.user_id
-    )
+    try:
+        redis_conn.publish("shadowdrive:events", json.dumps(notification))
+        logger.info(
+            "Published {} event to Redis for file='{}' (user_id={})",
+            notification["type"], file_path, user_id
+        )
+    except Exception as e:
+        logger.error("Failed to publish event to Redis: {}", e)
 
 
 # ─── Background Tasks ────────────────────────────────────────────────────────
@@ -124,17 +130,24 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
                 "verify_file_hash: MinIO read failed for '{}': {}",
                 version.storage_path, e
             )
+            user_id = version.file.user_id
+            file_id = version.file_id
+            file_path = version.file.file_path
             version.upload_status = UploadStatus.failed
             db.commit()
-            _notify_completion(version, "failed")
+            _notify_completion(user_id, file_id, file_path, version.id, "failed")
             return {"status": "failed", "reason": f"minio_read_error: {e}"}
 
         actual_hash = hashlib.sha256(file_bytes).hexdigest()
 
+        user_id = version.file.user_id
+        file_id = version.file_id
+        file_path = version.file.file_path
+
         if actual_hash == expected_hash:
             version.upload_status = UploadStatus.complete
             db.commit()
-            _notify_completion(version, "complete")
+            _notify_completion(user_id, file_id, file_path, version.id, "complete")
             logger.info(
                 "verify_file_hash: version_id={} PASSED (hash={}, {} bytes)",
                 version_id, actual_hash, len(file_bytes)
@@ -148,7 +161,7 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
         else:
             version.upload_status = UploadStatus.failed
             db.commit()
-            _notify_completion(version, "failed")
+            _notify_completion(user_id, file_id, file_path, version.id, "failed")
             logger.warning(
                 "verify_file_hash: version_id={} FAILED — "
                 "expected {}, got {}",
@@ -167,9 +180,12 @@ def verify_file_hash(version_id: int, expected_hash: str) -> dict:
         try:
             version = db.query(Version).filter(Version.id == version_id).first()
             if version:
+                user_id = version.file.user_id
+                file_id = version.file_id
+                file_path = version.file.file_path
                 version.upload_status = UploadStatus.failed
                 db.commit()
-                _notify_completion(version, "failed")
+                _notify_completion(user_id, file_id, file_path, version.id, "failed")
         except Exception:
             db.rollback()
         logger.exception("verify_file_hash: unhandled error for version_id={}", version_id)
@@ -214,9 +230,12 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         )
 
         if not all_chunks:
+            user_id = version.file.user_id
+            file_id = version.file_id
+            file_path = version.file.file_path
             version.upload_status = UploadStatus.failed
             db.commit()
-            _notify_completion(version, "failed")
+            _notify_completion(user_id, file_id, file_path, version.id, "failed")
             return {"status": "failed", "reason": "no_chunks_found"}
 
         chunk_keys = [c.chunk_storage_key for c in all_chunks]
@@ -227,9 +246,12 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
             total_bytes = storage.assemble_chunks(chunk_keys, final_key)
         except Exception as e:
             logger.error("assemble_and_verify: assembly failed: {}", e)
+            user_id = version.file.user_id
+            file_id = version.file_id
+            file_path = version.file.file_path
             version.upload_status = UploadStatus.failed
             db.commit()
-            _notify_completion(version, "failed")
+            _notify_completion(user_id, file_id, file_path, version.id, "failed")
             return {"status": "failed", "reason": f"assembly_error: {e}"}
 
         # Update version with final size
@@ -252,15 +274,22 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
             actual_hash = sha256.hexdigest()
         except Exception as e:
             logger.error("assemble_and_verify: re-read/hash failed: {}", e)
+            user_id = version.file.user_id
+            file_id = version.file_id
+            file_path = version.file.file_path
             version.upload_status = UploadStatus.failed
             db.commit()
-            _notify_completion(version, "failed")
+            _notify_completion(user_id, file_id, file_path, version.id, "failed")
             return {"status": "failed", "reason": f"verify_read_error: {e}"}
+
+        user_id = version.file.user_id
+        file_id = version.file_id
+        file_path = version.file.file_path
 
         if actual_hash == expected_hash:
             version.upload_status = UploadStatus.complete
             db.commit()
-            _notify_completion(version, "complete")
+            _notify_completion(user_id, file_id, file_path, version.id, "complete")
             logger.info(
                 "assemble_and_verify: version_id={} PASSED "
                 "({} chunks, {} bytes, hash={})",
@@ -276,7 +305,7 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         else:
             version.upload_status = UploadStatus.failed
             db.commit()
-            _notify_completion(version, "failed")
+            _notify_completion(user_id, file_id, file_path, version.id, "failed")
             logger.warning(
                 "assemble_and_verify: version_id={} hash MISMATCH — "
                 "expected {}, got {}",
@@ -293,9 +322,12 @@ def assemble_and_verify_chunks(version_id: int, expected_hash: str) -> dict:
         try:
             version = db.query(Version).filter(Version.id == version_id).first()
             if version:
+                user_id = version.file.user_id
+                file_id = version.file_id
+                file_path = version.file.file_path
                 version.upload_status = UploadStatus.failed
                 db.commit()
-                _notify_completion(version, "failed")
+                _notify_completion(user_id, file_id, file_path, version.id, "failed")
         except Exception:
             db.rollback()
         logger.exception(
