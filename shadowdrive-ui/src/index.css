@@ -250,8 +250,26 @@ html.lenis, html.lenis body {
   }
   
   .table-cell-label {
-    @apply font-label-md text-label-md text-on-surface-variant;
+    @apply text-label-md text-on-surface-variant;
+    font-family: var(--font-family-label-md);
   }
+}
+
+/* Custom font utilities to fix Tailwind v4 @apply issues */
+.font-label-md {
+  font-family: var(--font-family-label-md);
+}
+
+.font-body-md {
+  font-family: var(--font-family-body-md);
+}
+
+.font-headline-md {
+  font-family: var(--font-family-headline-md);
+}
+
+.font-code-sm {
+  font-family: var(--font-family-code-sm);
 }
 
 @media (min-width: 768px) and (max-width: 1023px) {
