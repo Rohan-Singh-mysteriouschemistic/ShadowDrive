@@ -86,9 +86,9 @@ export default function VersionHistory() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto p-margin-desktop z-10 flex flex-col items-center">
-        <div className="w-full max-w-container-max flex flex-col md:flex-row gap-gutter">
-          <div className="w-full md:w-80 shrink-0 flex flex-col gap-gutter">
+      <div className="flex-1 overflow-y-auto page-content z-10 flex flex-col items-center">
+        <div className="w-full max-w-container-max flex flex-col md:flex-row gap-gutter gap-margin-mobile md:gap-gutter">
+          <div className="w-full md:w-80 shrink-0 flex flex-col gap-margin-mobile md:gap-gutter">
             <Card variant="glass" className="p-6 flex flex-col items-center text-center border border-white/10">
               <div className="w-20 h-20 bg-primary-container/20 rounded-2xl flex items-center justify-center mb-4 border border-primary/20">
                 <span className="material-symbols-outlined text-4xl text-primary">
@@ -114,7 +114,7 @@ export default function VersionHistory() {
           </div>
 
           <Card className="flex-1 border border-white/10 overflow-hidden">
-            <div className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/10 font-code-sm text-code-sm text-on-surface-variant bg-surface-container-low/50 hidden md:grid">
+            <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-4 border-b border-white/10 font-code-sm text-code-sm text-on-surface-variant bg-surface-container-low/50">
               {!fileId && <div className="col-span-2">File</div>}
               <div className={!fileId ? "col-span-1" : "col-span-1"}>Ver</div>
               <div className={!fileId ? "col-span-3" : "col-span-4"}>Date / Time</div>
@@ -158,7 +158,7 @@ export default function VersionHistory() {
                     {formatBytes(ver.size_bytes)}
                   </div>
 
-                  <div className="col-span-2 flex justify-end items-center space-x-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="col-span-1 md:col-span-2 flex justify-end items-center space-x-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
                       variant="ghost"
                       size="sm"

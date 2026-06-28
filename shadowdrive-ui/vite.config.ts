@@ -2,7 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// https://vite.dev/config/
+const isDocker = process.env.DOCKER_ENV === 'true';
+const clientTarget = isDocker ? 'http://client:8001' : 'http://localhost:8001';
+const apiTarget = isDocker ? 'http://api:8000' : 'http://localhost:8000';
+
 export default defineConfig({
   plugins: [
     react(),
@@ -14,11 +17,11 @@ export default defineConfig({
     ],
     proxy: {
       '/api': {
-        target: 'http://client:8001',
+        target: clientTarget,
         changeOrigin: true,
       },
       '/server-api': {
-        target: 'http://api:8000',
+        target: apiTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/server-api/, '')
       }

@@ -1,6 +1,0 @@
-description = "Activates the UI/UX Pro Max skill for specialized design feedback and implementation."
-prompt = """
-Please activate the 'ui-ux-pro-max' skill and use its expertise to address the following request:
-
-{{args}}
-"""

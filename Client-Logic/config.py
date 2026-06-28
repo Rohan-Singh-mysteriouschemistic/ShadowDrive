@@ -56,7 +56,10 @@ if not _watch.startswith("/") and not _watch.startswith("~"):
 else:
     WATCH_DIR = os.path.expanduser(_watch)
 
-DB_PATH = os.path.join(BASE_DIR, "shadow.db")
+# Database stored in user-data subfolder
+USER_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user-data")
+os.makedirs(USER_DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(USER_DATA_DIR, "shadow.db")
 
 CHUNK_SIZE = app_config.client.chunk_size_mb * 1024 * 1024
 CHUNK_THRESHOLD = CHUNK_SIZE
@@ -83,9 +86,12 @@ def update_user_config(email: str):
     
     global WATCH_DIR, DB_PATH
     WATCH_DIR = os.path.expanduser(f"~/ShadowDrive_{email_clean}")
-    DB_PATH = os.path.join(BASE_DIR, f"shadow_{email_clean}.db")
+    
+    user_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user-data")
+    os.makedirs(user_data_dir, exist_ok=True)
+    DB_PATH = os.path.join(user_data_dir, f"shadow_{email_clean}.db")
     
     os.makedirs(WATCH_DIR, exist_ok=True)
     logger.info("Paths dynamically updated for {}: WATCH_DIR={}, DB_PATH={}", email, WATCH_DIR, DB_PATH)
 
-
+

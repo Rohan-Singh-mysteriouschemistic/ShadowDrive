@@ -4,6 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, apiFetch, setToken, getOrFetchToken, CLIENT_API_URL } from '../lib/api';
 import Badge from '../components/Badge';
 import Card from '../components/Card';
+import { ShadowDriveLogo } from '../components/shared/ShadowDriveLogo';
+import MobileNavDrawer from '../components/MobileNavDrawer';
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -16,6 +18,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [conflictsCount, setConflictsCount] = useState(0);
   const [showConfirmLogout, setShowConfirmLogout] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(!getToken());
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     async function verifyAuthAndFetchStats() {
@@ -91,37 +94,46 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           animation: pulse 2s infinite;
         }
         @keyframes pulse {
-          0% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0.4); }
-          70% { box-shadow: 0 0 0 6px rgba(78, 222, 163, 0); }
-          100% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0); }
+          0% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
+          70% { box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
         }
       `}</style>
 
-      <nav className="md:hidden flex justify-between items-center px-margin-mobile py-4 w-full border-b border-white/5 glass-panel-darker sticky top-0 z-50">
+      <nav className="md:hidden flex justify-between items-center px-margin-mobile py-3 w-full border-b border-white/5 glass-panel-darker sticky top-0 z-50 h-14">
         <div
-          className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface flex items-center gap-2 cursor-pointer"
+          className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface flex items-center gap-2.5 cursor-pointer"
           onClick={() => navigate('/vault')}
         >
-          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>dns</span>
-          SHADOWDRIVE
+          <ShadowDriveLogo size={20} animated={false} />
+          <span className="text-sm">SHADOWDRIVE</span>
         </div>
         <button
-          className="text-on-surface-variant hover:text-primary transition-colors cursor-pointer"
-          onClick={() => alert("Mobile menu toggle not yet implemented!")}
+          className="text-on-surface-variant hover:text-primary transition-colors cursor-pointer p-2"
+          onClick={() => setMobileMenuOpen(true)}
+          aria-label="Open menu"
         >
           <span className="material-symbols-outlined">menu</span>
         </button>
       </nav>
+
+      <MobileNavDrawer
+        isOpen={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        menuItems={menuItems}
+        systemItems={systemItems}
+        currentPath={location.pathname}
+        storage={storage}
+        onLogout={() => setShowConfirmLogout(true)}
+      />
 
       <aside className="hidden md:flex flex-col w-72 h-screen fixed left-0 top-0 glass-panel-darker border-r border-white/5 p-6 z-40">
         <div
           className="mb-12 flex items-center gap-3 cursor-pointer group"
           onClick={() => navigate('/vault')}
         >
-          <div className="w-8 h-8 rounded bg-primary-container/20 flex items-center justify-center border border-primary/30 group-hover:bg-primary/20 transition-colors">
-            <span className="material-symbols-outlined text-primary text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>dns</span>
-          </div>
-          <h1 className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface group-hover:text-primary transition-colors" style={{ textShadow: '0 0 15px rgba(16, 185, 129, 0.3)' }}>SHADOWDRIVE</h1>
+          <ShadowDriveLogo size={32} />
+          <h1 className="font-headline-md text-headline-md font-bold tracking-tighter text-on-surface group-hover:text-primary transition-colors" style={{ textShadow: '0 0 15px rgba(0, 255, 136, 0.3)' }}>SHADOWDRIVE</h1>
         </div>
 
         <nav className="flex-1 flex flex-col gap-2">
@@ -159,7 +171,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             </span>
           </div>
           <div className="w-full h-1.5 bg-surface-container-high rounded-full overflow-hidden mb-6">
-            <div className="h-full bg-primary rounded-full shadow-[0_0_8px_rgba(78,222,163,0.6)] pulse-dot" style={{ width: `${(storage.used / storage.total) * 100}%` }} />
+            <div className="h-full bg-primary rounded-full shadow-[0_0_8px_rgba(0,255,136,0.6)] pulse-dot" style={{ width: `${(storage.used / storage.total) * 100}%` }} />
           </div>
 
           <button
@@ -195,7 +207,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 Are you sure you want to sign out? This will stop background client sync and watcher services.
               </p>
             </div>
-            <div className="flex gap-4">
+            <div className="flex flex-col sm:flex-row gap-4">
               <button
                 onClick={() => setShowConfirmLogout(false)}
                 className="flex-1 py-3 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white font-label-md text-label-md transition-all cursor-pointer border border-white/5"

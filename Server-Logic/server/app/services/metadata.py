@@ -390,10 +390,23 @@ def _resolve_client_wins(
         parent_version_id=server_latest.parent_version_id,
         is_conflict_copy=True,
         announced_at=server_ts,
+        upload_status=server_latest.upload_status,
     )
     db.add(conflict_version)
     db.flush()
     db.refresh(conflict_version)
+
+    # Copy chunks from server_latest to conflict_version
+    server_chunks = db.query(models.VersionChunk).filter(
+        models.VersionChunk.version_id == server_latest.id
+    ).all()
+    for chunk in server_chunks:
+        db.add(models.VersionChunk(
+            version_id=conflict_version.id,
+            chunk_index=chunk.chunk_index,
+            chunk_hash=chunk.chunk_hash,
+        ))
+    db.flush()
 
     # Create the winner version on the original file path.
     winner_storage_key = f"{user_id}/{payload.path}/v{next_version_num}"

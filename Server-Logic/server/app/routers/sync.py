@@ -932,6 +932,7 @@ def resolve_conflict(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    import uuid
     # _fire_event is already imported at module level (line 16)
     o_file = db.query(models.File).filter(models.File.id == req.original_file_id, models.File.user_id == current_user.id).first()
     c_file = db.query(models.File).filter(models.File.id == req.conflict_file_id, models.File.user_id == current_user.id).first()
@@ -941,14 +942,26 @@ def resolve_conflict(
         
     if req.resolution_choice == 'keep_original':
         c_file.is_deleted = True
-        _fire_event(current_user.id, "file_deleted", {"file_id": c_file.id, "file_path": c_file.file_path})
+        old_c_path = c_file.file_path
+        c_file.file_path = f"{c_file.file_path}.resolved.{uuid.uuid4().hex[:8]}"
+        _fire_event(current_user.id, "file_deleted", {"file_id": c_file.id, "file_path": old_c_path})
     elif req.resolution_choice == 'keep_conflict':
         o_file.is_deleted = True
-        c_file.file_path = o_file.file_path
-        _fire_event(current_user.id, "file_deleted", {"file_id": o_file.id, "file_path": o_file.file_path})
+        old_o_path = o_file.file_path
+        o_file.file_path = f"{o_file.file_path}.deleted.{uuid.uuid4().hex[:8]}"
+        c_file.file_path = old_o_path
+        _fire_event(current_user.id, "file_deleted", {"file_id": o_file.id, "file_path": old_o_path})
         _fire_event(current_user.id, "file_created", {"file_id": c_file.id, "file_path": c_file.file_path})
     elif req.resolution_choice == 'keep_both':
-        c_file.file_path = c_file.file_path.replace("(Conflicted copy)", "(Resolved copy)")
+        new_path = c_file.file_path.replace("(Conflicted copy)", "(Resolved copy)")
+        existing = db.query(models.File).filter_by(user_id=current_user.id, file_path=new_path).first()
+        if existing:
+            if '.' in new_path:
+                parts = new_path.rsplit('.', 1)
+                new_path = f"{parts[0]} {uuid.uuid4().hex[:4]}.{parts[1]}"
+            else:
+                new_path = f"{new_path} {uuid.uuid4().hex[:4]}"
+        c_file.file_path = new_path
         _fire_event(current_user.id, "file_created", {"file_id": c_file.id, "file_path": c_file.file_path})
     else:
         raise HTTPException(status_code=400, detail="Invalid resolution choice")
