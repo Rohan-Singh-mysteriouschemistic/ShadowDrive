@@ -2,7 +2,6 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/queryClient';
-import { Agentation } from 'agentation';
 
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const AuthScreen = lazy(() => import('./pages/AuthScreen'));
@@ -51,7 +50,6 @@ export default function App() {
           </Routes>
         </Suspense>
       </BrowserRouter>
-      {import.meta.env.DEV && <Agentation />}
     </QueryClientProvider>
   );
 }
